@@ -1,1 +1,1 @@
-python3 scripts/init-env.py -a Generate
+python scripts/init-env.py -a Generate
