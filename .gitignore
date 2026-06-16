@@ -12,5 +12,35 @@ opencode.json
 skills-lock.json
 temp_parse.py
 agents/skills/bid-to-tender-skills
-scripts/__pycache__/
 ide/codex/auth.json
+
+# === Python ===
+# 字节码文件 / 编译产物
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 分发 / 打包
+build/
+dist/
+*.egg-info/
+*.egg
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+
+# 工具缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyc/
+
+# 环境变量文件
+.env
+.env.local
+.env.*.local
+agents/skills/ui-ux-pro-max/scripts/__pycache__/core.cpython-314.pyc
