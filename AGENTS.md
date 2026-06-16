@@ -204,6 +204,10 @@
 | `mastergo-magic-skill` | 设计稿/原型到实现协作 |
 | `drawio-skill` | 界面流程、模块关系、说明图 |
 | `mermaid-sequence-from-flow` | 把流程转为序列图/交互图 |
+| `design-taste-frontend` | 提升 UI 审美质量与设计品味 |
+| `high-end-visual-design` | 高端视觉表现与页面设计 |
+| `redesign-existing-projects` | 已有项目页面重构与改进 |
+| `ui-ux-pro-max` | 强化 UX 设计规范与交互一致性 |
 
 ### 7.2 Backend 推荐 Skills
 
@@ -221,6 +225,9 @@
 | `mastergo-magic-skill` | MasterGo 相关设计流程 |
 | `prd-to-mastergo-interaction-skill` | 从 PRD 到交互原型 |
 | `drawio-skill` | 用户流程与信息架构可视化 |
+| `design-taste-frontend` | 提升 UI 审美质量与设计品味 |
+| `high-end-visual-design` | 高端视觉表现与页面设计 |
+| `ui-ux-pro-max` | 强化 UX 设计规范与交互一致性 |
 
 ### 7.4 Product 推荐 Skills
 
@@ -260,6 +267,10 @@
 - `agents/skills/personnel-recruitment/SKILL.md`
 - `agents/skills/hardware-agent-prompt-skill/SKILL.md`
 - `agents/skills/elon-musk-perspective/SKILL.md`
+- `agents/skills/design-taste-frontend/SKILL.md`
+- `agents/skills/high-end-visual-design/SKILL.md`
+- `agents/skills/redesign-existing-projects/SKILL.md`
+- `agents/skills/ui-ux-pro-max/SKILL.md`
 
 ### MCP 参考
 
