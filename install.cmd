@@ -1,13 +1,13 @@
 ./init-env.cmd
-python3 .\scripts\init-ide.py -f -i Agents
+python .\scripts\init-ide.py -f -i Agents
 
-python3 .\scripts\init-ide.py -f -i trae-cn
+python .\scripts\init-ide.py -f -i trae-cn
 
-python3 .\scripts\init-ide.py -f -i Cursor
-
-
-python3 .\scripts\init-ide.py -f -i Codex
+python .\scripts\init-ide.py -f -i Cursor
 
 
+python .\scripts\init-ide.py -f -i Codex
 
-python3 scripts/init-ide.py -i trae-solo-cn -f
+
+
+python scripts/init-ide.py -i trae-solo-cn -f
