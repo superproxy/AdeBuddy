@@ -10,8 +10,8 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "OpenICU",
       "options": {
-        "baseURL": "${OPENICU_BASE_URL}",
-        "apiKey": "${OPENICU_API_KEY}"
+        "baseURL": "${LLM_OPENICU_OPENAI_BASE_URL}",
+        "apiKey": "${LLM_OPENICU_OPENAI_API_KEY}"
       },
       "models": {
         "gpt-4o": { "name": "GPT-4o" },
@@ -20,28 +20,53 @@
         "claude-haiku-4-20250514": { "name": "Claude Haiku 4" }
       }
     },
-    "openrouter": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "OpenRouter",
-      "options": {
-        "baseURL": "${OPEN_ROUTER_API_BASE_URL}",
-        "apiKey": "${OPEN_ROUTER_API_KEY}"
-      },
-      "models": {
-        "deepseek/deepseek-chat-v3-0324": { "name": "DeepSeek V3" },
-        "anthropic/claude-sonnet-4": { "name": "Claude Sonnet 4" },
-        "openai/gpt-4o": { "name": "GPT-4o" }
-      }
-    },
     "openai": {
       "options": {
-        "apiKey": "${OPEN_AI_API_KEY}"
+        "baseURL": "${LLM_OPENAI_OPENAI_BASE_URL}",
+        "apiKey": "${LLM_OPENAI_OPENAI_API_KEY}"
       }
     },
     "anthropic": {
       "options": {
-        "baseURL": "${ANTHROPIC_BASE_URL}",
-        "apiKey": "${ANTHROPIC_AUTH_TOKEN}"
+        "baseURL": "${LLM_OPENICU_ANTHROPIC_BASE_URL}",
+        "apiKey": "${LLM_OPENICU_ANTHROPIC_API_KEY}"
+      }
+    },
+    "openrouter": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OpenRouter",
+      "options": {
+        "baseURL": "${LLM_OPENROUTER_OPENAI_BASE_URL}",
+        "apiKey": "${LLM_OPENROUTER_OPENAI_API_KEY}"
+      },
+      "models": {
+        "anthropic/claude-sonnet-4": { "name": "Claude Sonnet 4" },
+        "openai/gpt-4o": { "name": "GPT-4o" },
+        "deepseek/deepseek-chat-v3-0324": { "name": "DeepSeek V3" }
+      }
+    },
+    "deepseek": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "DeepSeek",
+      "options": {
+        "baseURL": "${LLM_DEEPSEEK_OPENAI_BASE_URL}",
+        "apiKey": "${LLM_DEEPSEEK_OPENAI_API_KEY}"
+      },
+      "models": {
+        "deepseek-chat": { "name": "DeepSeek Chat" },
+        "deepseek-reasoner": { "name": "DeepSeek Reasoner" }
+      }
+    },
+    "volcengine": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Volcengine Ark",
+      "options": {
+        "baseURL": "${LLM_VOLCENGINE_OPENAI_BASE_URL}",
+        "apiKey": "${LLM_VOLCENGINE_OPENAI_API_KEY}"
+      },
+      "models": {
+        "doubao-pro-32k": { "name": "Doubao Pro 32K" },
+        "doubao-1-5-pro-32k": { "name": "Doubao 1.5 Pro 32K" }
       }
     }
   },

@@ -88,6 +88,15 @@ def flatten_env_config(env_config: dict, active_provider: str, active_protocols:
                     tag = f"[        ] "
                 print(f"  {COLOR_CYAN}{tag}llm/{provider_name}/{protocol_name}{COLOR_RESET}")
 
+                provider_upper = provider_name.upper().replace("-", "_")
+                protocol_upper = protocol_name.upper().replace("-", "_")
+                for k, v in protocol_value.items():
+                    if k.startswith("_"):
+                        continue
+                    field_upper = k.upper()
+                    named_key = f"LLM_{provider_upper}_{protocol_upper}_{field_upper}"
+                    flat[named_key] = v
+
                 if is_active:
                     env_mapping = PROTOCOL_ENV_MAP.get(protocol_name, {})
                     for k, v in protocol_value.items():
@@ -300,10 +309,51 @@ def invoke_export_shell(flat_config: dict) -> None:
         print(f"export {key}='{escaped}'")
 
 
+def _has_unresolved_placeholder(value) -> bool:
+    if isinstance(value, str):
+        return bool(re.search(r"\$\{\w+\}", value))
+    if isinstance(value, dict):
+        return any(_has_unresolved_placeholder(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_unresolved_placeholder(v) for v in value)
+    return False
+
+
+PRUNE_TARGET_KEYS = ("provider", "providers", "mcpServers", "mcp")
+
+
+def prune_unresolved_blocks(content: str) -> tuple[str, dict[str, list[str]]]:
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        return content, {}
+
+    pruned: dict[str, list[str]] = {}
+
+    def walk(node):
+        if isinstance(node, dict):
+            for key, value in list(node.items()):
+                if key in PRUNE_TARGET_KEYS and isinstance(value, dict):
+                    for child_name in list(value.keys()):
+                        if _has_unresolved_placeholder(value[child_name]):
+                            pruned.setdefault(key, []).append(child_name)
+                            del value[child_name]
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(data)
+    if not pruned:
+        return content, {}
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n", pruned
+
+
 def invoke_generate_step(
     flat_config: dict,
     template_file: Path,
     output_file: Path,
+    prune: bool = True,
 ) -> None:
     print(f"{COLOR_CYAN}========================================{COLOR_RESET}")
     print(f"{COLOR_CYAN}  Step: Generate config from template{COLOR_RESET}")
@@ -328,6 +378,16 @@ def invoke_generate_step(
             template_content = template_content.replace(placeholder, value)
             print(f"  {COLOR_GREEN}[REPLACED] {placeholder}{COLOR_RESET}")
             replaced += 1
+
+    if prune and template_file.suffix.lower() == ".json":
+        new_content, pruned_map = prune_unresolved_blocks(template_content)
+        if pruned_map:
+            template_content = new_content
+            print()
+            print(f"  {COLOR_YELLOW}[PRUNE] 移除未配置的子项（占位符未解析）:{COLOR_RESET}")
+            for parent, names in pruned_map.items():
+                for n in names:
+                    print(f"    - {parent}.{n}")
 
     remaining = re.findall(r"\$\{(\w+)\}", template_content)
     if remaining:
