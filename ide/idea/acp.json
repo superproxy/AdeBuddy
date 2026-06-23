@@ -17,7 +17,8 @@
       ],
       "env": {
         "ACP_PERMISSION_MODE": "bypassPermissions"
-      },
+      }
+    },
 
     "我的opencode": {
       "type": "custom",
@@ -28,7 +29,7 @@
       "env": {}
     },
 
-    "TRAE CLI": {
+    "我的TRAE": {
       "type": "custom",
       "command": "traecli",
       "args": [
@@ -36,10 +37,6 @@
         "serve"
       ],
       "env": {}
-    },
-    
-      "use_idea_mcp": true,
-      "use_custom_mcp": true
     }
   }
 }
