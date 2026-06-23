@@ -230,11 +230,8 @@
       "disabled": "true"
     },
     "open-computer-use": {
-      "name": "open-computer-use",
-      "command": "npx",
+      "command": "open-computer-use",
       "args": [
-        "-y",
-        "open-computer-use",
         "mcp"
       ]
     }
