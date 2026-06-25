@@ -16,7 +16,7 @@ Uses directory junctions so source is the single source of truth.
 - .mcp.json         : Symlink/Copy -> source mcp/mcp.json
 - .cursor/mcp.json   : Generated (mcpServers key)
 - .codex/config.toml : Generated (TOML format)
-- .claude/settings.json : Generated (from template + env.json)
+- .claude/settings.json : Generated (from template + env.yaml)
 - opencode.json       : Generated (OpenCode format)
 """
 
@@ -40,6 +40,23 @@ COLOR_RESET = "\033[0m"
 H1 = "## "
 H2 = "### "
 H3 = "#### "
+
+
+def _load_yaml_module():
+    try:
+        import yaml
+        return yaml
+    except ImportError:
+        print(f"{COLOR_RED}[ERROR] PyYAML is required to read env.yaml. Install: pip install pyyaml{COLOR_RESET}")
+        sys.exit(1)
+
+
+def load_env_config_file(path: Path) -> dict:
+    """Load env config file, auto-detecting JSON or YAML by extension."""
+    with open(path, "r", encoding="utf-8-sig") as f:
+        if path.suffix.lower() in (".yaml", ".yml"):
+            return _load_yaml_module().safe_load(f)
+        return json.load(f)
 
 
 def write_banner(title: str, source_dir: str, target_dir: str, ide: str) -> None:
@@ -396,8 +413,7 @@ def convert_to_opencode_mcp(source_file: Path, target_file: Path, force: bool,
 
     env_map = {}
     if env_file and env_file.exists():
-        with open(env_file, "r", encoding="utf-8-sig") as f:
-            env_config = json.load(f)
+        env_config = load_env_config_file(env_file)
         active_provider = ""
         active_protocols = ["openai"]
         llm_section = env_config.get("llm", {})
@@ -471,11 +487,10 @@ def convert_to_opencode_mcp(source_file: Path, target_file: Path, force: bool,
     if env_map:
         config, replaced = _resolve_placeholders(config, env_map)
         if replaced > 0:
-            print(f"{COLOR_GREEN}[OK] Resolved {replaced} placeholder(s) from env.json{COLOR_RESET}")
+            print(f"{COLOR_GREEN}[OK] Resolved {replaced} placeholder(s) from env.yaml{COLOR_RESET}")
 
     if env_file and env_file.exists():
-        with open(env_file, "r", encoding="utf-8-sig") as f:
-            env_config = json.load(f)
+        env_config = load_env_config_file(env_file)
         llm_section = env_config.get("llm", {})
         if isinstance(llm_section, dict):
             providers_config = config.get("provider", {})
@@ -880,8 +895,7 @@ def _generate_claude_settings(template_file: Path, target_file: Path, env_file: 
 
     env_map = {}
     if env_file and env_file.exists():
-        with open(env_file, "r", encoding="utf-8-sig") as f:
-            env_config = json.load(f)
+        env_config = load_env_config_file(env_file)
         active_provider = ""
         active_protocols = ["openai"]
         llm_section = env_config.get("llm", {})
@@ -969,7 +983,7 @@ def init_claude(target_dir: Path, source_rules_dir: Path, source_mcp_file: Path,
 
     source_dir = source_rules_dir.parent.parent
     claude_settings_template = source_dir / "ide" / "claude" / "settings.template.json"
-    env_file = source_dir / "env.json"
+    env_file = source_dir / "env.yaml"
     _generate_claude_settings(claude_settings_template, claude_dir / "settings.json", env_file, force)
 
     copy_skills_safe(source_skills_dir, claude_skills_dir, ".claude/skills/", force)
@@ -1058,7 +1072,7 @@ def init_opencode(target_dir: Path, source_rules_dir: Path, source_mcp_file: Pat
 
     source_dir = source_rules_dir.parent.parent
     opencode_template = source_dir / "ide" / "opencode" / "opencode.template.json"
-    env_file = source_dir / "env.json"
+    env_file = source_dir / "env.yaml"
     convert_to_opencode_mcp(source_mcp_file, opencode_dir / "opencode.json", force, opencode_template, env_file)
 
     copy_skills_safe(source_skills_dir, opencode_skills_dir, ".opencode/skills/", force)
@@ -1310,7 +1324,7 @@ def main() -> None:
     if "codex" in processed:
         print(f"  {COLOR_DARKGRAY}.codex/config.toml    (generated, TOML format){COLOR_RESET}")
     if "claude" in processed:
-        print(f"  {COLOR_DARKGRAY}.claude/settings.json (generated, from template + env.json){COLOR_RESET}")
+        print(f"  {COLOR_DARKGRAY}.claude/settings.json (generated, from template + env.yaml){COLOR_RESET}")
     if "opencode" in processed:
         print(f"  {COLOR_DARKGRAY}.opencode/opencode.json (generated, OpenCode format){COLOR_RESET}")
     if "idea" in processed:

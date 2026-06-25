@@ -3,7 +3,8 @@ agents/mcp/mcp.json
 
 # MCP 运行时配置（由 init-mcp-env 脚本从模板生成，包含真实密钥）
 agents/mcp/mcp.json
-env.json
+env.yaml
+env.local.yaml
 
 opencode.json
 

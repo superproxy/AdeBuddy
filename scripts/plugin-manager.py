@@ -21,6 +21,33 @@ COLOR_DARKGRAY = "\033[90m"
 COLOR_RESET = "\033[0m"
 
 
+def _load_yaml_module():
+    try:
+        import yaml
+        return yaml
+    except ImportError:
+        print(f"{COLOR_RED}[ERROR] PyYAML is required to read env.yaml. Install: pip install pyyaml{COLOR_RESET}")
+        sys.exit(1)
+
+
+def load_env_config_file(path: Path) -> dict:
+    """Load env config file, auto-detecting JSON or YAML by extension."""
+    with open(path, "r", encoding="utf-8-sig") as f:
+        if path.suffix.lower() in (".yaml", ".yml"):
+            return _load_yaml_module().safe_load(f)
+        return json.load(f)
+
+
+def save_env_config_file(path: Path, data: dict) -> None:
+    """Save env config file, format detected by extension."""
+    with open(path, "w", encoding="utf-8") as f:
+        if path.suffix.lower() in (".yaml", ".yml"):
+            _load_yaml_module().safe_dump(data, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
+        else:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+
+
 def load_plugin_config(plugin_path: Path) -> dict:
     """加载插件配置文件"""
     if not plugin_path.exists():
@@ -50,8 +77,7 @@ def update_env_file(env_path: Path, plugin_config: dict) -> None:
         print(f"{COLOR_YELLOW}[!] 环境变量文件不存在，创建新文件: {env_path}{COLOR_RESET}")
         env_config = {}
     else:
-        with open(env_path, "r", encoding="utf-8-sig") as f:
-            env_config = json.load(f)
+        env_config = load_env_config_file(env_path)
 
     # 更新环境变量
     updated = False
@@ -67,8 +93,7 @@ def update_env_file(env_path: Path, plugin_config: dict) -> None:
 
     if updated:
         env_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(env_path, "w", encoding="utf-8") as f:
-            json.dump(env_config, f, indent=2, ensure_ascii=False)
+        save_env_config_file(env_path, env_config)
         print(f"{COLOR_GREEN}[OK] 环境变量文件已更新: {env_path}{COLOR_RESET}")
 
 
@@ -346,8 +371,8 @@ def main() -> None:
     )
     install_parser.add_argument(
         "--env-file",
-        default="env.json",
-        help="环境变量文件路径 (默认: env.json)"
+        default="env.yaml",
+        help="环境变量文件路径 (默认: env.yaml)"
     )
     install_parser.add_argument(
         "--mcp-template",
@@ -512,8 +537,8 @@ def main() -> None:
     )
     install_parser.add_argument(
         "--env-file",
-        default="env.json",
-        help="环境变量文件路径 (默认: env.json)"
+        default="env.yaml",
+        help="环境变量文件路径 (默认: env.yaml)"
     )
     install_parser.add_argument(
         "--mcp-template",
