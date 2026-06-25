@@ -68,6 +68,59 @@ def read_env_config(env_file: Path, silent: bool = False) -> dict:
 DIRECT_FIELD_KEYS = {"base_url", "api_key", "models"}
 
 
+def build_proxy_model_list(env_config: dict) -> str:
+    """
+    从 active provider 的 openai 协议收集模型，生成 YAML model_list 条目。
+    仅当 proxy.enable=true 时调用，代理的是 active provider。
+
+    关键：api_base / api_key 使用原始 provider 的值（LiteLLM 需要知道往哪转发），
+    而非 proxy 自身地址。proxy 地址仅供 IDE 连接使用。
+    """
+    llm = env_config.get("llm", {})
+    if not isinstance(llm, dict):
+        return "  []"
+
+    active_provider_name = llm.get("_active_provider", "")
+    if not active_provider_name or active_provider_name not in llm:
+        return "  []"
+
+    provider_value = llm[active_provider_name]
+    if not isinstance(provider_value, dict):
+        return "  []"
+
+    openai_config = None
+    if _is_flat_provider(provider_value):
+        openai_config = provider_value
+    elif "openai" in provider_value:
+        openai_config = provider_value["openai"]
+
+    if not isinstance(openai_config, dict):
+        return "  []"
+
+    models = openai_config.get("models", {})
+    if not isinstance(models, dict) or not models:
+        return "  []"
+
+    # 使用原始 provider 的 base_url 和 api_key，LiteLLM 据此转发到真实 provider
+    provider_base_url = openai_config.get("base_url", "")
+    provider_api_key = openai_config.get("api_key", "")
+
+    entries: list[str] = []
+    for model_name in models:
+        entries.append(
+            f"  - model_name: \"{model_name}\"\n"
+            f"    litellm_params:\n"
+            f"      model: \"{model_name}\"\n"
+            f"      custom_llm_provider: openai\n"
+            f"      api_base: \"{provider_base_url}\"\n"
+            f"      api_key: \"{provider_api_key}\""
+        )
+
+    if not entries:
+        return "  []"
+    return "\n".join(entries)
+
+
 def _is_flat_provider(provider_value: dict) -> bool:
     return any(k in DIRECT_FIELD_KEYS for k in provider_value)
 
@@ -79,6 +132,8 @@ def flatten_env_config(env_config: dict, active_provider: str, active_protocols:
     if isinstance(llm, dict):
         for provider_name, provider_value in llm.items():
             if provider_name.startswith("_"):
+                continue
+            if provider_name == "proxy":
                 continue
             if not isinstance(provider_value, dict):
                 continue
@@ -161,6 +216,66 @@ def flatten_env_config(env_config: dict, active_provider: str, active_protocols:
                             flat[generic_active_key] = v
                     flat["LLM_ACTIVE_PROVIDER"] = provider_name
                     flat.setdefault("LLM_ACTIVE_PROTOCOL", protocol_name)
+
+    # --- Codex / Proxy 逻辑 ---
+    # proxy.enable=true  → 覆盖 LLM_ACTIVE_BASE_URL / LLM_ACTIVE_API_KEY 为代理地址
+    # proxy.enable=false → 从 active provider 的 codex 配置提取
+    proxy_config = llm.get("proxy", {}) if isinstance(llm, dict) else {}
+    enable_proxy = proxy_config.get("enable", False) if isinstance(proxy_config, dict) else False
+    active_provider_name = llm.get("_active_provider", "") if isinstance(llm, dict) else ""
+
+    if enable_proxy:
+        # 代理模式：IDE → proxy(127.0.0.1:4000) → 真实 provider
+        flat["LLM_ACTIVE_BASE_URL"] = proxy_config.get("base_url", "http://127.0.0.1:4000/v1")
+        flat["LLM_ACTIVE_API_KEY"] = proxy_config.get("api_key", "")
+        flat["LLM_CODEX_BASE_URL"] = proxy_config.get("base_url", "http://127.0.0.1:4000/v1")
+        flat["LLM_CODEX_API_KEY"] = proxy_config.get("api_key", "")
+    elif active_provider_name and active_provider_name in llm:
+        active_provider_data = llm[active_provider_name]
+        if isinstance(active_provider_data, dict):
+            # 直连模式：从 openai 协议取真实 provider 地址
+            openai_config = None
+            if _is_flat_provider(active_provider_data):
+                openai_config = active_provider_data
+            elif "openai" in active_provider_data:
+                openai_config = active_provider_data["openai"]
+
+            if isinstance(openai_config, dict):
+                flat["LLM_ACTIVE_BASE_URL"] = openai_config.get("base_url", "")
+                flat["LLM_ACTIVE_API_KEY"] = openai_config.get("api_key", "")
+            else:
+                flat["LLM_ACTIVE_BASE_URL"] = ""
+                flat["LLM_ACTIVE_API_KEY"] = ""
+
+            # codex 协议单独存（仅供特殊用途）
+            if "codex" in active_provider_data:
+                codex_protocol = active_provider_data["codex"]
+                if isinstance(codex_protocol, dict):
+                    flat["LLM_CODEX_BASE_URL"] = codex_protocol.get("base_url", "http://127.0.0.1:4000/v1")
+                    flat["LLM_CODEX_API_KEY"] = codex_protocol.get("api_key", "")
+                else:
+                    flat["LLM_CODEX_BASE_URL"] = "http://127.0.0.1:4000/v1"
+                    flat["LLM_CODEX_API_KEY"] = ""
+            else:
+                flat["LLM_CODEX_BASE_URL"] = flat.get("LLM_ACTIVE_BASE_URL", "")
+                flat["LLM_CODEX_API_KEY"] = flat.get("LLM_ACTIVE_API_KEY", "")
+        else:
+            flat["LLM_ACTIVE_BASE_URL"] = ""
+            flat["LLM_ACTIVE_API_KEY"] = ""
+            flat["LLM_CODEX_BASE_URL"] = ""
+            flat["LLM_CODEX_API_KEY"] = ""
+    else:
+        flat["LLM_ACTIVE_BASE_URL"] = ""
+        flat["LLM_ACTIVE_API_KEY"] = ""
+        flat["LLM_CODEX_BASE_URL"] = ""
+        flat["LLM_CODEX_API_KEY"] = ""
+
+    # --- Proxy model list ---
+    # proxy.enable=false 时完全忽略代理，model_list 为空
+    if enable_proxy:
+        flat["PROXY_MODEL_LIST"] = build_proxy_model_list(env_config)
+    else:
+        flat["PROXY_MODEL_LIST"] = "  []"
 
     for section_key in ("embedding",):
         section_value = env_config.get(section_key, {})
@@ -271,7 +386,7 @@ def list_providers(env_config: dict) -> list[str]:
     llm = env_config.get("llm", {})
     if not isinstance(llm, dict):
         return []
-    return [k for k in llm.keys() if not k.startswith("_")]
+    return [k for k in llm.keys() if not k.startswith("_") and k != "proxy"]
 
 
 def list_protocols(env_config: dict, provider: str) -> list[str]:
@@ -682,6 +797,11 @@ def main():
         claude_settings_output = PROJECT_ROOT / "ide" / "claude" / "settings.json"
         if claude_settings_template.exists():
             invoke_generate_step(flat_config, claude_settings_template, claude_settings_output)
+
+        proxy_config_template = PROJECT_ROOT / "proxy" / "config.template.yaml"
+        proxy_config_output = PROJECT_ROOT / "proxy" / "config.yaml"
+        if proxy_config_template.exists():
+            invoke_generate_step(flat_config, proxy_config_template, proxy_config_output, prune=False)
 
     print(f"{COLOR_CYAN}========================================{COLOR_RESET}")
     print(f"{COLOR_CYAN}  Done.{COLOR_RESET}")

@@ -1,0 +1,8 @@
+model_list:
+  # - model_name: "doubao-seed-2.0-code"
+  #   litellm_params:
+  #     model: "doubao-seed-2.0-code"
+  #     custom_llm_provider: openai
+  #     api_base: "https://ark.cn-beijing.volces.com/api/plan/v3  "
+  #     api_key: ""
+${PROXY_MODEL_LIST}

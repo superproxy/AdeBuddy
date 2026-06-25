@@ -51,3 +51,4 @@ ide/codex/config.toml
 /.claude/skills/open-browser-use/
 /.claude/skills/open-browser-use/
 /.claude/skills/open-browser-use/
+/proxy/config.yaml
