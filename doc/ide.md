@@ -9,6 +9,15 @@ Linux	~/.jetbrains/acp.json	保持全局单一文件不变
 
 
 
+## claude
+切换模型 /model doubao-seed-2.0-code 
+
+## codex
+直接加载了指定模型
+
+
+
+
 
 ## 安装 Claude Code
 npm install -g @anthropic-ai/claude-code
