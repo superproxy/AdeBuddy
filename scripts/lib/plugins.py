@@ -166,15 +166,31 @@ def run_plugin_scripts(plugin_config: dict) -> None:
             print(f"{COLOR_YELLOW}[!] 脚本执行错误: {e}，继续安装 skill{COLOR_RESET}")
 
 
-def install_skills(plugin_config: dict, source_dir: Path, use_symlink: bool = False) -> None:
-    """安装插件所需技能"""
+def install_skills(plugin_config: dict, source_dir: Path, use_symlink: bool = False) -> tuple:
+    """安装插件所需技能。
+
+    Returns:
+        (success_count, failed_names) 成功数量与失败技能名列表。
+    """
     if "skills" not in plugin_config:
-        return
+        return (0, [])
 
     skills = plugin_config["skills"]
+    success = 0
+    failed = []
 
     for skill in skills:
-        install_skill(skill, source_dir, use_symlink=use_symlink)
+        ok = install_skill(skill, source_dir, use_symlink=use_symlink)
+        if ok:
+            success += 1
+        else:
+            name = skill.get("name", skill) if isinstance(skill, dict) else str(skill)
+            failed.append(name)
+
+    if failed:
+        print(f"{COLOR_RED}[!] {len(failed)} skill(s) 安装失败: {', '.join(failed)}{COLOR_RESET}")
+
+    return (success, failed)
 
 
 def install_plugin(
@@ -217,7 +233,7 @@ def install_plugin(
     run_plugin_scripts(plugin_config)
 
     print(f"\n{COLOR_MAGENTA}步骤 2/3: 下载技能{COLOR_RESET}")
-    install_skills(plugin_config, source_dir, use_symlink=use_symlink)
+    succ, failed = install_skills(plugin_config, source_dir, use_symlink=use_symlink)
 
     print(f"\n{COLOR_MAGENTA}步骤 3/3: 合并环境变量到 llm.yaml{COLOR_RESET}")
     update_env_file(env_path, plugin_config)
@@ -228,7 +244,10 @@ def install_plugin(
     print(f"\n{COLOR_GREEN}{'=' * 40}{COLOR_RESET}")
     print(f"{COLOR_GREEN}  插件安装完成！{COLOR_RESET}")
     print(f"{COLOR_GREEN}{'=' * 40}{COLOR_RESET}")
-    print(f"\n{COLOR_YELLOW}下一步: {COLOR_RESET}")
+    if failed:
+        print(f"{COLOR_YELLOW}注意: {len(failed)} 个技能安装失败: {', '.join(failed)}{COLOR_RESET}")
+        print(f"{COLOR_YELLOW}可手动检查或修正插件配置中的 source 字段{COLOR_RESET}")
+    print(f"{COLOR_YELLOW}下一步: {COLOR_RESET}")
     print(f"  {COLOR_WHITE}1. agentctl generate  # 合并 mcp.yaml + plugin mcp → mcp.json{COLOR_RESET}")
     print(f"  {COLOR_WHITE}2. agentctl sync      # 同步 mcp + skills 到各 IDE{COLOR_RESET}")
 

@@ -374,13 +374,19 @@ def build_install_command(skill_config, use_symlink: bool = False) -> tuple:
             install_command = f"npx skills add {url} --skill {skill_name} -y".strip()
         elif source:
             parsed_source, parsed_skill = parse_shorthand(source)
-            if not explicit_skill and parsed_skill:
+            # source 是 "owner/repo@skill" 格式 → parsed_source 和 parsed_skill 都有值
+            if parsed_source and parsed_skill:
                 effective_source = parsed_source
                 effective_skill = parsed_skill
-                skill_name = effective_skill or skill_name
+                skill_name = effective_skill
+            # source 是 "owner/repo" 格式 → 只有 parsed_source 有值，安装整个仓库
+            elif parsed_source and "/" in parsed_source:
+                effective_source = parsed_source
+                effective_skill = explicit_skill  # 仅当显式指定 skill 字段才加 --skill
+            # source 是单纯技能名（无 /）→ 直接按名安装，不加 --skill
             else:
                 effective_source = source
-                effective_skill = explicit_skill
+                effective_skill = ""
 
             if effective_skill:
                 install_command = f"npx skills add {effective_source} --skill {effective_skill} -y".strip()
@@ -419,41 +425,87 @@ def build_install_command(skill_config, use_symlink: bool = False) -> tuple:
     return skill_name, install_command
 
 
-def install_skill(skill_config, source_dir: Path = None, use_symlink: bool = False) -> None:
-    """安装技能：优先检查本地缓存，再从远程安装。"""
-    skill_name, install_command = build_install_command(skill_config, use_symlink=use_symlink)
+def install_skill(skill_config, source_dir: Path = None, use_symlink: bool = False) -> bool:
+    """安装技能：source 有效则先用 source；否则 find-skills 按名查找；再找本地缓存；都不行则失败。
 
-    if not skill_name and source_dir:
-        print(f"{COLOR_YELLOW}[!] Could not determine skill name, skipping{COLOR_RESET}")
-        return
+    流程：
+      1. 已存在于 .agents/skills/ → 跳过（成功）
+      2. source 有效（owner/repo 或 url）→ npx skills add <source> [--skill <name>]
+         - 有 --skill → 安装指定技能，按 <name> 验证
+         - 无 --skill（整个仓库）→ returncode==0 即视为成功
+      3. find-skills 按名查找：npx skills add <name> -y（市场搜索）
+      4. 本地缓存 agents/skills/<name> → 复制
+      5. 仍未成功 → 返回 False（失败）
 
-    if source_dir:
-        dot_agents_skills_dir = source_dir / ".agents" / "skills"
-        dot_agents_skills_dir.mkdir(parents=True, exist_ok=True)
+    Returns:
+        True 安装成功（含跳过），False 安装失败。
+    """
+    skill_name, source_command = build_install_command(skill_config, use_symlink=use_symlink)
+    # 判断 source 是否有效（含 owner/repo 或 url）
+    has_explicit_source = bool(source_command) and (
+        '--skill' in source_command
+        or source_command.startswith('http')
+        or ' add ' in source_command and '/' in source_command.split(' add ', 1)[1].split(' ', 1)[0]
+    )
+    # 是否安装整个仓库（无 --skill）→ 不能按 <name> 目录验证
+    is_whole_repo = has_explicit_source and '--skill' not in source_command
 
-        target_skill_dir = dot_agents_skills_dir / skill_name
-
-        if target_skill_dir.exists():
-            print(f"{COLOR_DARKGRAY}[-] Skill already exists in .agents/skills: {skill_name}, skipping update{COLOR_RESET}")
-            return
-
-        cache_skill_dir = source_dir / "agents" / "skills" / skill_name
-        if cache_skill_dir.exists():
-            print(f"{COLOR_MAGENTA}[-] Installing skill from cache: {skill_name}{COLOR_RESET}")
-            try:
-                shutil.copytree(cache_skill_dir, target_skill_dir, ignore=shutil.ignore_patterns('.git'))
-                print(f"{COLOR_GREEN}[OK] Skill copied from cache: {skill_name}{COLOR_RESET}")
-                return
-            except Exception as e:
-                print(f"{COLOR_YELLOW}[!] Cache copy failed, will download from remote: {e}{COLOR_RESET}")
-
-    print(f"{COLOR_MAGENTA}[-] Installing skill: {install_command}{COLOR_RESET}")
+    if not skill_name:
+        print(f"{COLOR_RED}[!] Could not determine skill name, skipping{COLOR_RESET}")
+        return False
 
     install_cwd = source_dir if source_dir else None
 
+    # Step 1: 已存在于 .agents/skills/ → 跳过（仅对单技能安装有效）
+    if source_dir and not is_whole_repo:
+        dot_agents_skills_dir = source_dir / ".agents" / "skills"
+        dot_agents_skills_dir.mkdir(parents=True, exist_ok=True)
+        target_skill_dir = dot_agents_skills_dir / skill_name
+        if target_skill_dir.exists():
+            print(f"{COLOR_DARKGRAY}[-] Skill already exists in .agents/skills: {skill_name}, skipping update{COLOR_RESET}")
+            return True
+
+    def _verify_installed():
+        """检查技能是否已落到 .agents/skills 或全局目录。整个仓库安装时跳过此检查。"""
+        if is_whole_repo:
+            return True  # 整个仓库安装，returncode==0 即视为成功
+        if source_dir:
+            expected = source_dir / ".agents" / "skills" / skill_name
+            if expected.exists():
+                return True
+            home_skill = Path.home() / ".agents" / "skills" / skill_name
+            if home_skill.exists():
+                print(f"{COLOR_YELLOW}[!] Skill installed to global dir: {home_skill}{COLOR_RESET}")
+                print(f"    期望位置: {expected}")
+                return True
+        return False
+
+    # Step 2: source 有效 → 用 source 安装
+    if has_explicit_source:
+        print(f"{COLOR_MAGENTA}[-] Installing skill via source: {source_command}{COLOR_RESET}")
+        try:
+            result = subprocess.run(
+                source_command,
+                shell=True,
+                capture_output=False,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                cwd=install_cwd
+            )
+            if result.returncode == 0 and _verify_installed():
+                print(f"{COLOR_GREEN}[OK] Skill installed via source: {skill_name}{COLOR_RESET}")
+                return True
+            print(f"{COLOR_YELLOW}[!] source 安装未成功，尝试 find-skills 按名查找{COLOR_RESET}")
+        except Exception as e:
+            print(f"{COLOR_YELLOW}[!] source 安装错误: {e}，尝试 find-skills 按名查找{COLOR_RESET}")
+
+    # Step 3: find-skills 按名查找（市场搜索，忽略可能无效的 source）
+    find_command = f"npx skills add {skill_name} -y"
+    print(f"{COLOR_MAGENTA}[-] find-skills 查找: {find_command}{COLOR_RESET}")
     try:
         result = subprocess.run(
-            install_command,
+            find_command,
             shell=True,
             capture_output=False,
             text=True,
@@ -461,22 +513,28 @@ def install_skill(skill_config, source_dir: Path = None, use_symlink: bool = Fal
             errors='ignore',
             cwd=install_cwd
         )
-        if result.returncode == 0:
-            if source_dir and skill_name:
-                expected = source_dir / ".agents" / "skills" / skill_name
-                if expected.exists():
-                    print(f"{COLOR_GREEN}[OK] Skill installed successfully{COLOR_RESET}")
-                else:
-                    home_skill = Path.home() / ".agents" / "skills" / skill_name
-                    if home_skill.exists():
-                        print(f"{COLOR_YELLOW}[!] Skill installed to global dir: {home_skill}{COLOR_RESET}")
-                        print(f"    期望位置: {expected}")
-                        print(f"    可手动复制或加 -g 标志确认全局安装意图{COLOR_RESET}")
-                    else:
-                        print(f"{COLOR_YELLOW}[!] Skill install reported success but not found at: {expected}{COLOR_RESET}")
-            else:
-                print(f"{COLOR_GREEN}[OK] Skill installed successfully{COLOR_RESET}")
-        else:
-            print(f"{COLOR_RED}[!] Skill install failed (exit={result.returncode}){COLOR_RESET}")
+        if result.returncode == 0 and _verify_installed():
+            print(f"{COLOR_GREEN}[OK] Skill installed from marketplace: {skill_name}{COLOR_RESET}")
+            return True
+        print(f"{COLOR_YELLOW}[!] find-skills 未找到 {skill_name}，尝试本地缓存{COLOR_RESET}")
     except Exception as e:
-        print(f"{COLOR_RED}[!] Skill install error: {e}{COLOR_RESET}")
+        print(f"{COLOR_YELLOW}[!] find-skills 错误: {e}，尝试本地缓存{COLOR_RESET}")
+
+    # Step 4: 本地缓存 agents/skills/<name> → 复制（仅对单技能安装有效）
+    if source_dir and not is_whole_repo:
+        cache_skill_dir = source_dir / "agents" / "skills" / skill_name
+        if cache_skill_dir.exists():
+            print(f"{COLOR_MAGENTA}[-] Installing skill from local cache: {skill_name}{COLOR_RESET}")
+            try:
+                dot_agents_skills_dir = source_dir / ".agents" / "skills"
+                dot_agents_skills_dir.mkdir(parents=True, exist_ok=True)
+                target_skill_dir = dot_agents_skills_dir / skill_name
+                shutil.copytree(cache_skill_dir, target_skill_dir, ignore=shutil.ignore_patterns('.git'))
+                print(f"{COLOR_GREEN}[OK] Skill copied from local cache: {skill_name}{COLOR_RESET}")
+                return True
+            except Exception as e:
+                print(f"{COLOR_RED}[!] Local cache copy failed: {e}{COLOR_RESET}")
+
+    # Step 5: 都不行 → 失败
+    print(f"{COLOR_RED}[✗] Skill install failed (not via source/marketplace/local): {skill_name}{COLOR_RESET}")
+    return False

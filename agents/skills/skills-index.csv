@@ -13,25 +13,25 @@ find-skills,技能发现,General,帮助发现和查找仓库中的 AI 技能,有
 personnel-recruitment,人力资源,General,结构化招聘（JD优化/简历筛选/面试设计/评分卡/录用建议）,招聘|岗位画像|JD优化|简历筛选|面试设计|评分卡,false,local,personnel-recruitment,,HR Recruitment,
 hardware-agent-prompt-skill,硬件AI,General,为硬件 AI 智能体生成提示词与角色设定（IoT/桌宠/音箱/机器人）,硬件智能体|设备人格|IoT|儿童陪伴|提示词|角色设定,false,local,hardware-agent-prompt-skill,,Hardware Prompt,
 elon-musk-perspective,思维模型,General,马斯克思维模型分析（第一性原理/五步算法/白痴指数/垂直整合）,马斯克视角|第一性原理|白痴指数|五步算法|垂直整合|成本拆解,false,local,elon-musk-perspective,,Elon Musk,
-design-taste-frontend,前端设计,Frontend,提升 UI 审美质量与设计品味,设计品味|UI/UX|前端设计,false,local,design-taste-frontend,,Design Taste,
-high-end-visual-design,视觉设计,Frontend|Design,高端视觉表现与页面设计,视觉设计|高端设计,false,local,high-end-visual-design,,High-End Visual,
-redesign-existing-projects,项目重构,Frontend,已有项目页面重构与改进,项目重构|重设计,false,local,redesign-existing-projects,,Redesign Project,
-ui-ux-pro-max,UI/UX增强,Frontend|Design,强化 UX 设计规范与交互一致性,UI/UX|用户体验,false,local,ui-ux-pro-max,,UI/UX Pro Max,
-frontend-design,前端设计,Frontend,前端设计与开发,前端开发|UI开发,false,local,frontend-design,,Frontend Design,
+design-taste-frontend,前端设计,Frontend,提升 UI 审美质量与设计品味,设计品味|UI/UX|前端设计,true,remote,leonxlnx/taste-skill@design-taste-frontend,https://skills.sh/leonxlnx/taste-skill/design-taste-frontend,,Design Taste
+high-end-visual-design,视觉设计,Frontend|Design,高端视觉表现与页面设计,视觉设计|高端设计,true,remote,leonxlnx/taste-skill@high-end-visual-design,https://skills.sh/leonxlnx/taste-skill/high-end-visual-design,,High-End Visual
+redesign-existing-projects,项目重构,Frontend,已有项目页面重构与改进,项目重构|重设计,true,remote,leonxlnx/taste-skill@redesign-existing-projects,https://skills.sh/leonxlnx/taste-skill/redesign-existing-projects,,Redesign Project
+ui-ux-pro-max,UI/UX增强,Frontend|Design,强化 UX 设计规范与交互一致性,UI/UX|用户体验,true,remote,nextlevelbuilder/ui-ux-pro-max-skill@ui-ux-pro-max,https://skills.sh/nextlevelbuilder/ui-ux-pro-max-skill/ui-ux-pro-max,,UI/UX Pro Max
+frontend-design,前端设计,Frontend,前端设计与开发,前端开发|UI开发,true,remote,anthropics/skills@frontend-design,https://skills.sh/anthropics/skills/frontend-design,,Frontend Design
 bid-to-tender-skill,投标书,Product|General,招标文件自动解析并生成结构化投标书,投标书|标书制作|招标响应,false,local,bid-to-tender-skill,,Bid to Tender,
-brainstorming,头脑风暴,General,创造性思维与头脑风暴,头脑风暴|创意,false,local,brainstorming,,Brainstorming,
+brainstorming,头脑风暴,General,创造性思维与头脑风暴,头脑风暴|创意,true,remote,obra/superpowers@brainstorming,https://skills.sh/obra/superpowers/brainstorming,,Brainstorming
 openspec-explore,OpenSpec,General,OpenSpec 探索与分析,OpenSpec|需求探索,false,local,openspec-explore,,OpenSpec Explore,
 openspec-propose,OpenSpec,General,OpenSpec 提议与设计,OpenSpec|需求提议,false,local,openspec-propose,,OpenSpec Propose,
 openspec-apply-change,OpenSpec,General,OpenSpec 应用变更,OpenSpec|变更应用,false,local,openspec-apply-change,,OpenSpec Apply Change,
 openspec-sync-specs,OpenSpec,General,OpenSpec 同步规范,OpenSpec|规范同步,false,local,openspec-sync-specs,,OpenSpec Sync Specs,
 openspec-archive-change,OpenSpec,General,OpenSpec 归档变更,OpenSpec|变更归档,false,local,openspec-archive-change,,OpenSpec Archive Change,
-systematic-debugging,调试,Backend|Frontend,系统性调试与问题排查,调试|问题排查,false,local,systematic-debugging,,Systematic Debugging,
-test-driven-development,测试,Backend|Frontend,测试驱动开发,TDD|测试,false,local,test-driven-development,,Test Driven Dev,
-receiving-code-review,代码审查,Backend|Frontend,接收代码审查,代码审查|Code Review,false,local,receiving-code-review,,Receive Review,
-requesting-code-review,代码审查,Backend|Frontend,请求代码审查,代码审查|Code Review,false,local,requesting-code-review,,Request Review,
-verification-before-completion,验证,Backend|Frontend,完成前验证与检查,验证|检查,false,local,verification-before-completion,,Verify Complete,
+systematic-debugging,调试,Backend|Frontend,系统性调试与问题排查,调试|问题排查,true,remote,obra/superpowers@systematic-debugging,https://skills.sh/obra/superpowers/systematic-debugging,,Systematic Debugging
+test-driven-development,测试,Backend|Frontend,测试驱动开发,TDD|测试,true,remote,obra/superpowers@test-driven-development,https://skills.sh/obra/superpowers/test-driven-development,,Test Driven Dev
+receiving-code-review,代码审查,Backend|Frontend,接收代码审查,代码审查|Code Review,true,remote,obra/superpowers@receiving-code-review,https://skills.sh/obra/superpowers/receiving-code-review,,Receive Review
+requesting-code-review,代码审查,Backend|Frontend,请求代码审查,代码审查|Code Review,true,remote,obra/superpowers@requesting-code-review,https://skills.sh/obra/superpowers/requesting-code-review,,Request Review
+verification-before-completion,验证,Backend|Frontend,完成前验证与检查,验证|检查,true,remote,obra/superpowers@verification-before-completion,https://skills.sh/obra/superpowers/verification-before-completion,,Verify Complete
 playwright-master,自动化,Frontend|Backend,Playwright 浏览器自动化专家,Playwright|自动化测试,false,local,playwright-master,,Playwright Master,
-pptx,文档,General,PPTX 文件处理与演示文稿制作,PPT|演示文稿,false,local,pptx,,PPTX,
+pptx,文档,General,PPTX 文件处理与演示文稿制作,PPT|演示文稿,true,remote,anthropics/skills@pptx,https://skills.sh/anthropics/skills/pptx,,PPTX
 screenshot,工具,General,截图与屏幕捕获,截图|屏幕捕获,false,local,screenshot,,Screenshot,
 role-skills,角色技能,General,角色技能与能力,角色|技能,false,local,role-skills,,Role Skills,
 skill-creator,技能创建,General,创建与编辑技能,技能创建|Skill Creation,false,local,skill-creator,,Skill Creator,

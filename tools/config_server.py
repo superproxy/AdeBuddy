@@ -752,6 +752,10 @@ def save_plugin():
         "skills": body.get("skills", []),
         "llm": body.get("llm", []),
     }
+    # 可选：初始化脚本（install script）
+    scripts = body.get("scripts")
+    if isinstance(scripts, dict) and scripts.get("install", "").strip():
+        config["scripts"] = {"install": scripts["install"].strip()}
     # 安全文件名
     safe_name = "".join(c for c in name if c.isalnum() or c in ("-", "_"))
     out_path = PLUGINS_DIR / f"{safe_name}.plugin.yaml"
@@ -799,6 +803,81 @@ def delete_plugin():
     try:
         path.unlink()
         return jsonify({"ok": True, "path": str(path.relative_to(PROJECT_ROOT))})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/plugin/export", methods=["GET"])
+def export_plugin():
+    """导出单个插件 yaml。query: file=xxx.plugin.yaml"""
+    fname = (request.args.get("file") or "").strip()
+    if not fname:
+        return jsonify({"ok": False, "error": "缺少 file 参数"}), 400
+    path = (PLUGINS_DIR / fname).resolve()
+    try:
+        path.relative_to(PLUGINS_DIR.resolve())
+    except ValueError:
+        return jsonify({"ok": False, "error": "非法路径"}), 400
+    if not path.exists():
+        return jsonify({"ok": False, "error": "文件不存在"}), 404
+    try:
+        import io
+        buf = io.BytesIO(path.read_bytes())
+        buf.seek(0)
+        return send_file(buf, as_attachment=True, download_name=fname,
+                         mimetype="application/yaml")
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/plugin/export-all", methods=["GET"])
+def export_all_plugins():
+    """导出全部预定义插件为 zip。"""
+    import io, zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        if PLUGINS_DIR.exists():
+            for f in PLUGINS_DIR.glob("*.plugin.yaml"):
+                zf.write(f, arcname=f.name)
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name="plugins-export.zip",
+                     mimetype="application/zip")
+
+
+@app.route("/api/plugin/import", methods=["POST"])
+def import_plugin():
+    """导入插件 yaml。Body: {filename: 'xxx.plugin.yaml', content: '...'}
+    会校验 yaml 合法性 + 文件名安全 + 是否重名。
+    """
+    body = request.get_json(force=True)
+    fname = (body.get("filename") or "").strip()
+    content = body.get("content") or ""
+    if not fname:
+        return jsonify({"ok": False, "error": "缺少 filename"}), 400
+    if not fname.endswith(".plugin.yaml"):
+        return jsonify({"ok": False, "error": "文件名必须以 .plugin.yaml 结尾"}), 400
+    safe_name = "".join(c for c in fname if c.isalnum() or c in ("-", "_", "."))
+    if safe_name != fname:
+        return jsonify({"ok": False, "error": "文件名含非法字符"}), 400
+    # yaml 校验
+    try:
+        data = yaml.safe_load(content)
+    except yaml.YAMLError as e:
+        return jsonify({"ok": False, "error": f"YAML 解析失败: {e}"}), 400
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "yaml 顶层应为 dict"}), 400
+    if not data.get("name"):
+        return jsonify({"ok": False, "error": "缺少 name 字段"}), 400
+    out_path = PLUGINS_DIR / safe_name
+    overwrite = bool(body.get("overwrite"))
+    if out_path.exists() and not overwrite:
+        return jsonify({"ok": False, "error": "exists",
+                        "msg": f"{safe_name} 已存在，是否覆盖？"}), 409
+    try:
+        PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(content, encoding="utf-8")
+        return jsonify({"ok": True, "path": str(out_path.relative_to(PROJECT_ROOT)),
+                        "name": data.get("name")})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
