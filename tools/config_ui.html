@@ -71,7 +71,14 @@
         </label>
         <span class="text-white/60">|</span>
         <span class="text-white/80">同步到:</span>
-        <label v-for="ide in ideList" :key="ide.key" class="flex items-center gap-1 cursor-pointer select-none text-white/80 hover:text-white">
+        <label v-for="ide in ideList" :key="ide.key"
+               draggable="true"
+               @dragstart="onIdeDragStart($event, ide.key)"
+               @dragover="onIdeDragOver($event, ide.key)"
+               @drop="onIdeDrop($event, ide.key)"
+               @dragend="onIdeDragEnd"
+               :class="['flex items-center gap-1 cursor-grab select-none text-white/80 hover:text-white px-1.5 py-0.5 rounded transition', dragIdeKey === ide.key ? 'opacity-40' : '', dragOverIdeKey === ide.key && dragIdeKey ? 'bg-white/20 ring-1 ring-white/40' : '']"
+               :title="ide.desc + ' (拖动排序)'">
           <input type="checkbox" :value="ide.key" v-model="syncTargetIdes" class="w-3 h-3"> {{ ide.label }}
         </label>
         <span class="text-white/40 text-[10px]">({{ syncTargetIdes.length }} 选中)</span>
@@ -616,7 +623,7 @@ createApp({
     const installedSkills = ref([]);
     const _togglingSkills = new Set();  // 防止并发切换
 
-    const ideList = [
+    const ideList = ref([
       { key: 'Agents', label: 'Agents', desc: '通用 agents 配置' },
       { key: 'Claude', label: 'Claude', desc: '.claude/settings.json + rules' },
       { key: 'Codex', label: 'Codex', desc: '.codex/config.toml + rules' },
@@ -629,7 +636,58 @@ createApp({
       { key: 'trae-cn', label: 'Trae CN', desc: '.trae-cn/rules + mcp' },
       { key: 'trae-solo-cn', label: 'Trae Solo CN', desc: '.trae-solo-cn/rules' },
       { key: 'WorkBuddy', label: 'WorkBuddy', desc: '.workbuddy/rules + models.json' },
-    ];
+    ]);
+    // IDE 拖拽排序
+    const dragIdeKey = ref('');
+    const dragOverIdeKey = ref('');
+    function onIdeDragStart(e, key) {
+      dragIdeKey.value = key;
+      e.dataTransfer.effectAllowed = 'move';
+    }
+    function onIdeDragOver(e, key) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      dragOverIdeKey.value = key;
+    }
+    function onIdeDrop(e, key) {
+      e.preventDefault();
+      const fromKey = dragIdeKey.value;
+      const toKey = key;
+      if (!fromKey || fromKey === toKey) { dragIdeKey.value = ''; dragOverIdeKey.value = ''; return; }
+      const list = ideList.value;
+      const fromIdx = list.findIndex(i => i.key === fromKey);
+      const toIdx = list.findIndex(i => i.key === toKey);
+      if (fromIdx < 0 || toIdx < 0) { dragIdeKey.value = ''; dragOverIdeKey.value = ''; return; }
+      const [moved] = list.splice(fromIdx, 1);
+      list.splice(toIdx, 0, moved);
+      saveIdeOrder();
+      dragIdeKey.value = '';
+      dragOverIdeKey.value = '';
+    }
+    function onIdeDragEnd() {
+      dragIdeKey.value = '';
+      dragOverIdeKey.value = '';
+    }
+    const IDE_ORDER_KEY = 'myagent.ideOrder';
+    function saveIdeOrder() {
+      try { localStorage.setItem(IDE_ORDER_KEY, JSON.stringify(ideList.value.map(i => i.key))); } catch (e) {}
+    }
+    function loadIdeOrder() {
+      try {
+        const saved = localStorage.getItem(IDE_ORDER_KEY);
+        if (!saved) return;
+        const order = JSON.parse(saved);
+        if (!Array.isArray(order) || !order.length) return;
+        const map = new Map(ideList.value.map(i => [i.key, i]));
+        const ordered = order.map(k => map.get(k)).filter(Boolean);
+        // 追加未保存的新 IDE
+        for (const i of ideList.value) {
+          if (!order.includes(i.key)) ordered.push(i);
+        }
+        ideList.value = ordered;
+      } catch (e) {}
+    }
+    loadIdeOrder();
     const ideLog = ref('');
     // 同步范围勾选（默认全部勾选）
     const syncScopes = reactive({ llm: true, mcp: true, skill: true, rules: true });
@@ -1299,6 +1357,7 @@ createApp({
       skillTab, skillSources, skillSearchQ, skillSearchResults, skillSearchHint, skillSearched,
       manualSkillInput, installedSkills, enabledInstalledCount, onToggleSkill,
       ideList, ideLog, ideLogEl, syncScopes, syncTargetIdes, syncing, autoSync, syncCurrentScope,
+      dragIdeKey, dragOverIdeKey, onIdeDragStart, onIdeDragOver, onIdeDrop, onIdeDragEnd,
       logVisible, logText, logEl, modalVisible, modalTitle, modalContent, toasts,
       toggleProvider, updateEnvDataSection, addProvider, deleteProvider, setActiveProvider,
       addProtocol, deleteProtocol, addModel, deleteModel, renameModel, saveEnv,
