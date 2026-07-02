@@ -1,12 +1,14 @@
-""".agents 全局共享目录分发器。
+""".agents 本地运行目录分发器。
 
-迁移自 scripts/init-ide.py 的 init_agents()。
-复制 rules / mcp / skills 到 .agents/ 目录（供多 IDE 共享）。
+定位（与 AGENTS.md 一致）：
+  - .agents/ 是根据配置生成的目录，或存放 skill 的目录
+  - .agents/skills/  → 插件安装的技能（开发环境，不提交）
+  - .agents/installed-plugins.yaml → 已安装插件清单
+  - 不再同步 rules/ 和 mcp/（这些由 agents/ 单一数据源维护）
 """
 from pathlib import Path
 
-from lib.logging import COLOR_YELLOW, COLOR_GREEN, COLOR_RESET
-from lib.mcp import copy_dir_safe, copy_file_safe
+from lib.logging import COLOR_GREEN, COLOR_RESET
 from lib.skills import copy_skills_safe, write_skills_index
 from .base import IdeTarget
 
@@ -15,20 +17,15 @@ class AgentsTarget(IdeTarget):
     name = "Agents"
 
     def init_rules(self, source_rules: Path):
-        agents_rules_dir = self.root / ".agents" / "rules"
-        agents_rules_dir.parent.mkdir(parents=True, exist_ok=True)
-        if source_rules.exists():
-            copy_dir_safe(source_rules, agents_rules_dir, ".agents/rules/", self.force)
-        else:
-            print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
+        """不同步 rules — rules 由 agents/rules/ 单一数据源维护。"""
+        pass
 
     def init_mcp(self, source_mcp_file: Path):
-        agents_mcp_dir = self.root / ".agents" / "mcp"
-        agents_mcp_dir.mkdir(parents=True, exist_ok=True)
-        copy_file_safe(source_mcp_file, agents_mcp_dir / ".mcp.json",
-                       ".agents/mcp/.mcp.json", self.force)
+        """不同步 mcp — mcp 由 agents/mcp/ 单一数据源维护。"""
+        pass
 
     def init_skills(self, source_skills_dir: Path):
+        """同步 skills 到 .agents/skills/（插件安装的技能开发环境）。"""
         agents_skills_dir = self.root / ".agents" / "skills"
         copy_skills_safe(source_skills_dir, agents_skills_dir, ".agents/skills/",
                          self.force, self.include_skills)
@@ -47,4 +44,4 @@ class AgentsTarget(IdeTarget):
                     if d.is_dir() and d.name not in seen:
                         seen.add(d.name)
                         skill_count += 1
-            print(f"{COLOR_GREEN}[OK] {skill_count} skills available in agents/skills/{COLOR_RESET}")
+            print(f"{COLOR_GREEN}[OK] {skill_count} skills available in .agents/skills/{COLOR_RESET}")
