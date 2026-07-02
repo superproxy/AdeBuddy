@@ -39,6 +39,9 @@ COLOR_WHITE = "\033[97m"
 COLOR_DARKGRAY = "\033[90m"
 COLOR_RESET = "\033[0m"
 
+# 同步范围（由 --scope 参数设置；包含: llm, mcp, skill, plugin, rules）
+SCOPE = {"llm", "mcp", "skill", "plugin", "rules"}
+
 H1 = "## "
 H2 = "### "
 H3 = "#### "
@@ -774,16 +777,18 @@ def init_cursor(target_dir: Path, source_rules_dir: Path, source_mcp_file: Path,
 
     cursor_dir.mkdir(parents=True, exist_ok=True)
 
-    if source_rules_dir.exists():
-        copy_dir_safe(source_rules_dir, cursor_rules_dir, ".cursor/rules/", force)
-    else:
-        print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
+    if "rules" in SCOPE:
+        if source_rules_dir.exists():
+            copy_dir_safe(source_rules_dir, cursor_rules_dir, ".cursor/rules/", force)
+        else:
+            print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
 
-    convert_to_cursor_mcp(source_mcp_file, cursor_dir / "mcp.json", force)
+    if "mcp" in SCOPE:
+        convert_to_cursor_mcp(source_mcp_file, cursor_dir / "mcp.json", force)
 
-    copy_skills_safe(source_skills_dir, cursor_skills_dir, ".cursor/skills/", force)
-
-    write_skills_index(source_skills_dir, cursor_skills_dir / "README.md", "Cursor", force)
+    if "skill" in SCOPE:
+        copy_skills_safe(source_skills_dir, cursor_skills_dir, ".cursor/skills/", force)
+        write_skills_index(source_skills_dir, cursor_skills_dir / "README.md", "Cursor", force)
     return "cursor"
 
 
@@ -808,20 +813,23 @@ def init_trae(target_dir: Path, source_rules_dir: Path, source_mcp_file: Path,
     trae_rules_dir = trae_global_dir / "rules"
     trae_skills_dir = trae_global_dir / "skills"
 
-    if source_rules_dir.exists():
-        copy_dir_safe(source_rules_dir, trae_rules_dir, "~/.trae/rules/", force)
-    else:
-        print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
+    if "rules" in SCOPE:
+        if source_rules_dir.exists():
+            copy_dir_safe(source_rules_dir, trae_rules_dir, "~/.trae/rules/", force)
+        else:
+            print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
 
-    # MCP 配置写到 IDE User 目录
-    trae_user_mcp = _get_ide_user_dir("Trae") / "mcp.json"
-    copy_mcp_file_safe(source_mcp_file, trae_user_mcp, f"Trae User/mcp.json", force)
+    if "mcp" in SCOPE:
+        # MCP 配置写到 IDE User 目录
+        trae_user_mcp = _get_ide_user_dir("Trae") / "mcp.json"
+        copy_mcp_file_safe(source_mcp_file, trae_user_mcp, f"Trae User/mcp.json", force)
 
-    copy_skills_safe(source_skills_dir, trae_skills_dir, "~/.trae/skills/", force)
+    if "skill" in SCOPE:
+        copy_skills_safe(source_skills_dir, trae_skills_dir, "~/.trae/skills/", force)
 
-    if source_skills_dir.exists():
-        skill_count = sum(1 for d in source_skills_dir.iterdir() if d.is_dir())
-        print(f"{COLOR_GREEN}[OK] {skill_count} skills available in agents/skills/{COLOR_RESET}")
+        if source_skills_dir.exists():
+            skill_count = sum(1 for d in source_skills_dir.iterdir() if d.is_dir())
+            print(f"{COLOR_GREEN}[OK] {skill_count} skills available in agents/skills/{COLOR_RESET}")
     return "trae"
 
 
@@ -836,24 +844,26 @@ def init_trae_cn(target_dir: Path, source_rules_dir: Path, source_mcp_file: Path
     trae_cn_rules_dir = trae_cn_global_dir / "rules"
     trae_cn_skills_dir = trae_cn_global_dir / "skills"
 
-    if source_rules_dir.exists():
-        copy_dir_safe(source_rules_dir, trae_cn_rules_dir, "~/.trae-cn/rules/", force)
-    else:
-        print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
+    if "rules" in SCOPE:
+        if source_rules_dir.exists():
+            copy_dir_safe(source_rules_dir, trae_cn_rules_dir, "~/.trae-cn/rules/", force)
+        else:
+            print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
 
-    # MCP 配置：同时复制到全局目录和 IDE User 目录
-    trae_cn_user_mcp = _get_ide_user_dir("Trae CN") / "mcp.json"
-    copy_mcp_file_safe(source_mcp_file, trae_cn_user_mcp, "Trae CN User/mcp.json", force)
+    if "mcp" in SCOPE:
+        # MCP 配置：同时复制到全局目录和 IDE User 目录
+        trae_cn_user_mcp = _get_ide_user_dir("Trae CN") / "mcp.json"
+        copy_mcp_file_safe(source_mcp_file, trae_cn_user_mcp, "Trae CN User/mcp.json", force)
+        # 同时复制到全局目录 ~/.trae-cn/mcp.json（与 rules/skills 同级）
+        trae_cn_global_mcp = trae_cn_global_dir / "mcp.json"
+        copy_mcp_file_safe(source_mcp_file, trae_cn_global_mcp, "~/.trae-cn/mcp.json", force)
 
-    # 同时复制到全局目录 ~/.trae-cn/mcp.json（与 rules/skills 同级）
-    trae_cn_global_mcp = trae_cn_global_dir / "mcp.json"
-    copy_mcp_file_safe(source_mcp_file, trae_cn_global_mcp, "~/.trae-cn/mcp.json", force)
+    if "skill" in SCOPE:
+        copy_skills_safe(source_skills_dir, trae_cn_skills_dir, "~/.trae-cn/skills/", force)
 
-    copy_skills_safe(source_skills_dir, trae_cn_skills_dir, "~/.trae-cn/skills/", force)
-
-    if source_skills_dir.exists():
-        skill_count = sum(1 for d in source_skills_dir.iterdir() if d.is_dir())
-        print(f"{COLOR_GREEN}[OK] {skill_count} skills available in agents/skills/{COLOR_RESET}")
+        if source_skills_dir.exists():
+            skill_count = sum(1 for d in source_skills_dir.iterdir() if d.is_dir())
+            print(f"{COLOR_GREEN}[OK] {skill_count} skills available in agents/skills/{COLOR_RESET}")
     return "trae-cn"
 
 
@@ -868,20 +878,23 @@ def init_trae_solo_cn(target_dir: Path, source_rules_dir: Path, source_mcp_file:
     trae_solo_cn_rules_dir = trae_solo_cn_global_dir / "rules"
     trae_solo_cn_skills_dir = trae_solo_cn_global_dir / "skills"
 
-    if source_rules_dir.exists():
-        copy_dir_safe(source_rules_dir, trae_solo_cn_rules_dir, "~/.trae-solo-cn/rules/", force)
-    else:
-        print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
+    if "rules" in SCOPE:
+        if source_rules_dir.exists():
+            copy_dir_safe(source_rules_dir, trae_solo_cn_rules_dir, "~/.trae-solo-cn/rules/", force)
+        else:
+            print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
 
-    # MCP 配置写到 IDE User 目录
-    trae_solo_cn_user_mcp = _get_ide_user_dir("TRAE SOLO CN") / "mcp.json"
-    copy_mcp_file_safe(source_mcp_file, trae_solo_cn_user_mcp, "TRAE SOLO CN User/mcp.json", force)
+    if "mcp" in SCOPE:
+        # MCP 配置写到 IDE User 目录
+        trae_solo_cn_user_mcp = _get_ide_user_dir("TRAE SOLO CN") / "mcp.json"
+        copy_mcp_file_safe(source_mcp_file, trae_solo_cn_user_mcp, "TRAE SOLO CN User/mcp.json", force)
 
-    copy_skills_safe(source_skills_dir, trae_solo_cn_skills_dir, "~/.trae-solo-cn/skills/", force)
+    if "skill" in SCOPE:
+        copy_skills_safe(source_skills_dir, trae_solo_cn_skills_dir, "~/.trae-solo-cn/skills/", force)
 
-    if source_skills_dir.exists():
-        skill_count = sum(1 for d in source_skills_dir.iterdir() if d.is_dir())
-        print(f"{COLOR_GREEN}[OK] {skill_count} skills available in agents/skills/{COLOR_RESET}")
+        if source_skills_dir.exists():
+            skill_count = sum(1 for d in source_skills_dir.iterdir() if d.is_dir())
+            print(f"{COLOR_GREEN}[OK] {skill_count} skills available in agents/skills/{COLOR_RESET}")
     return "trae-solo-cn"
 
 
@@ -897,21 +910,23 @@ def init_agents(target_dir: Path, source_rules_dir: Path, source_mcp_file: Path,
 
     agents_dir.mkdir(parents=True, exist_ok=True)
 
-    if source_rules_dir.exists():
-        copy_dir_safe(source_rules_dir, agents_rules_dir, ".agents/rules/", force)
-    else:
-        print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
+    if "rules" in SCOPE:
+        if source_rules_dir.exists():
+            copy_dir_safe(source_rules_dir, agents_rules_dir, ".agents/rules/", force)
+        else:
+            print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
 
-    agents_mcp_dir.mkdir(parents=True, exist_ok=True)
-    copy_file_safe(source_mcp_file, agents_mcp_file, ".agents/mcp/.mcp.json", force)
+    if "mcp" in SCOPE:
+        agents_mcp_dir.mkdir(parents=True, exist_ok=True)
+        copy_file_safe(source_mcp_file, agents_mcp_file, ".agents/mcp/.mcp.json", force)
 
-    copy_skills_safe(source_skills_dir, agents_skills_dir, ".agents/skills/", force)
+    if "skill" in SCOPE:
+        copy_skills_safe(source_skills_dir, agents_skills_dir, ".agents/skills/", force)
+        write_skills_index(source_skills_dir, agents_skills_dir / "README.md", "Agents", force)
 
-    write_skills_index(source_skills_dir, agents_skills_dir / "README.md", "Agents", force)
-
-    if source_skills_dir.exists():
-        skill_count = sum(1 for d in source_skills_dir.iterdir() if d.is_dir())
-        print(f"{COLOR_GREEN}[OK] {skill_count} skills available in agents/skills/{COLOR_RESET}")
+        if source_skills_dir.exists():
+            skill_count = sum(1 for d in source_skills_dir.iterdir() if d.is_dir())
+            print(f"{COLOR_GREEN}[OK] {skill_count} skills available in agents/skills/{COLOR_RESET}")
     return "agents"
 
 
@@ -925,21 +940,23 @@ def init_codex(target_dir: Path, source_rules_dir: Path, source_mcp_file: Path,
 
     codex_dir.mkdir(parents=True, exist_ok=True)
 
-    if source_rules_dir.exists():
-        copy_dir_safe(source_rules_dir, codex_rules_dir, ".codex/rules/", force)
-    else:
-        print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
+    if "rules" in SCOPE:
+        if source_rules_dir.exists():
+            copy_dir_safe(source_rules_dir, codex_rules_dir, ".codex/rules/", force)
+        else:
+            print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
 
-    source_dir = source_rules_dir.parent.parent
-    codex_template = source_dir / "ide" / "codex" / "config.toml"
-    convert_to_codex_mcp(source_mcp_file, codex_dir / "config.toml", force, codex_template)
+    if "mcp" in SCOPE:
+        source_dir = source_rules_dir.parent.parent
+        codex_template = source_dir / "ide" / "codex" / "config.toml"
+        convert_to_codex_mcp(source_mcp_file, codex_dir / "config.toml", force, codex_template)
 
-    codex_auth_src = source_dir / "ide" / "codex" / "auth.json"
-    copy_file_safe(codex_auth_src, codex_dir / "auth.json", ".codex/auth.json", force)
+        codex_auth_src = source_dir / "ide" / "codex" / "auth.json"
+        copy_file_safe(codex_auth_src, codex_dir / "auth.json", ".codex/auth.json", force)
 
-    copy_skills_safe(source_skills_dir, codex_skills_dir, ".codex/skills/", force)
-
-    write_skills_index(source_skills_dir, codex_skills_dir / "README.md", "Codex", force)
+    if "skill" in SCOPE:
+        copy_skills_safe(source_skills_dir, codex_skills_dir, ".codex/skills/", force)
+        write_skills_index(source_skills_dir, codex_skills_dir / "README.md", "Codex", force)
     return "codex"
 
 
@@ -1037,21 +1054,24 @@ def init_claude(target_dir: Path, source_rules_dir: Path, source_mcp_file: Path,
 
     claude_dir.mkdir(parents=True, exist_ok=True)
 
-    if source_rules_dir.exists():
-        copy_dir_safe(source_rules_dir, claude_rules_dir, ".claude/rules/", force)
-    else:
-        print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
+    if "rules" in SCOPE:
+        if source_rules_dir.exists():
+            copy_dir_safe(source_rules_dir, claude_rules_dir, ".claude/rules/", force)
+        else:
+            print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
 
-    copy_file_safe(source_mcp_file, claude_dir / "mcp.json", ".claude/mcp.json", force)
+    if "mcp" in SCOPE:
+        copy_file_safe(source_mcp_file, claude_dir / "mcp.json", ".claude/mcp.json", force)
 
-    source_dir = source_rules_dir.parent.parent
-    claude_settings_template = source_dir / "ide" / "claude" / "settings.template.json"
-    env_config = load_merged_env_config(source_dir)
-    _generate_claude_settings(claude_settings_template, claude_dir / "settings.json", env_config, force)
+    if "llm" in SCOPE:
+        source_dir = source_rules_dir.parent.parent
+        claude_settings_template = source_dir / "ide" / "claude" / "settings.template.json"
+        env_config = load_merged_env_config(source_dir)
+        _generate_claude_settings(claude_settings_template, claude_dir / "settings.json", env_config, force)
 
-    copy_skills_safe(source_skills_dir, claude_skills_dir, ".claude/skills/", force)
-
-    write_skills_index(source_skills_dir, claude_skills_dir / "README.md", "Claude", force)
+    if "skill" in SCOPE:
+        copy_skills_safe(source_skills_dir, claude_skills_dir, ".claude/skills/", force)
+        write_skills_index(source_skills_dir, claude_skills_dir / "README.md", "Claude", force)
     return "claude"
 
 
@@ -1134,21 +1154,24 @@ def init_workbuddy(target_dir: Path, source_rules_dir: Path, source_mcp_file: Pa
 
     wb_dir.mkdir(parents=True, exist_ok=True)
 
-    if source_rules_dir.exists():
-        copy_dir_safe(source_rules_dir, wb_rules_dir, ".workbuddy/rules/", force)
-    else:
-        print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
+    if "rules" in SCOPE:
+        if source_rules_dir.exists():
+            copy_dir_safe(source_rules_dir, wb_rules_dir, ".workbuddy/rules/", force)
+        else:
+            print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
 
-    copy_file_safe(source_mcp_file, wb_dir / "mcp.json", ".workbuddy/mcp.json", force)
+    if "mcp" in SCOPE:
+        copy_file_safe(source_mcp_file, wb_dir / "mcp.json", ".workbuddy/mcp.json", force)
 
-    # 生成 WorkBuddy 特有的 LLM 模型列表
-    source_dir = source_rules_dir.parent.parent
-    env_config = load_merged_env_config(source_dir)
-    generate_workbuddy_models(env_config, wb_dir / "models.json", force)
+    if "llm" in SCOPE:
+        # 生成 WorkBuddy 特有的 LLM 模型列表
+        source_dir = source_rules_dir.parent.parent
+        env_config = load_merged_env_config(source_dir)
+        generate_workbuddy_models(env_config, wb_dir / "models.json", force)
 
-    copy_skills_safe(source_skills_dir, wb_skills_dir, ".workbuddy/skills/", force)
-
-    write_skills_index(source_skills_dir, wb_skills_dir / "README.md", "WorkBuddy", force)
+    if "skill" in SCOPE:
+        copy_skills_safe(source_skills_dir, wb_skills_dir, ".workbuddy/skills/", force)
+        write_skills_index(source_skills_dir, wb_skills_dir / "README.md", "WorkBuddy", force)
     return "workbuddy"
 
 
@@ -1162,16 +1185,18 @@ def init_qoder(target_dir: Path, source_rules_dir: Path, source_mcp_file: Path,
 
     qoder_dir.mkdir(parents=True, exist_ok=True)
 
-    if source_rules_dir.exists():
-        copy_dir_safe(source_rules_dir, qoder_rules_dir, ".qoder/rules/", force)
-    else:
-        print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
+    if "rules" in SCOPE:
+        if source_rules_dir.exists():
+            copy_dir_safe(source_rules_dir, qoder_rules_dir, ".qoder/rules/", force)
+        else:
+            print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
 
-    copy_file_safe(source_mcp_file, qoder_dir / "mcp.json", ".qoder/mcp.json", force)
+    if "mcp" in SCOPE:
+        copy_file_safe(source_mcp_file, qoder_dir / "mcp.json", ".qoder/mcp.json", force)
 
-    copy_skills_safe(source_skills_dir, qoder_skills_dir, ".qoder/skills/", force)
-
-    write_skills_index(source_skills_dir, qoder_skills_dir / "README.md", "Qoder", force)
+    if "skill" in SCOPE:
+        copy_skills_safe(source_skills_dir, qoder_skills_dir, ".qoder/skills/", force)
+        write_skills_index(source_skills_dir, qoder_skills_dir / "README.md", "Qoder", force)
     return "qoder"
 
 
@@ -1185,16 +1210,18 @@ def init_openclaw(target_dir: Path, source_rules_dir: Path, source_mcp_file: Pat
 
     oc_dir.mkdir(parents=True, exist_ok=True)
 
-    if source_rules_dir.exists():
-        copy_dir_safe(source_rules_dir, oc_rules_dir, ".openclaw/rules/", force)
-    else:
-        print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
+    if "rules" in SCOPE:
+        if source_rules_dir.exists():
+            copy_dir_safe(source_rules_dir, oc_rules_dir, ".openclaw/rules/", force)
+        else:
+            print(f"{COLOR_YELLOW}[!] Source rules/ not found, skipping{COLOR_RESET}")
 
-    copy_file_safe(source_mcp_file, oc_dir / "mcp.json", ".openclaw/mcp.json", force)
+    if "mcp" in SCOPE:
+        copy_file_safe(source_mcp_file, oc_dir / "mcp.json", ".openclaw/mcp.json", force)
 
-    copy_skills_safe(source_skills_dir, oc_skills_dir, ".openclaw/skills/", force)
-
-    write_skills_index(source_skills_dir, oc_skills_dir / "README.md", "OpenClaw", force)
+    if "skill" in SCOPE:
+        copy_skills_safe(source_skills_dir, oc_skills_dir, ".openclaw/skills/", force)
+        write_skills_index(source_skills_dir, oc_skills_dir / "README.md", "OpenClaw", force)
     return "openclaw"
 
 
@@ -1207,14 +1234,15 @@ def init_opencode(target_dir: Path, source_rules_dir: Path, source_mcp_file: Pat
 
     opencode_dir.mkdir(parents=True, exist_ok=True)
 
-    source_dir = source_rules_dir.parent.parent
-    opencode_template = source_dir / "ide" / "opencode" / "opencode.template.json"
-    env_config = load_merged_env_config(source_dir)
-    convert_to_opencode_mcp(source_mcp_file, opencode_dir / "opencode.json", force, opencode_template, env_config)
+    if "mcp" in SCOPE or "llm" in SCOPE:
+        source_dir = source_rules_dir.parent.parent
+        opencode_template = source_dir / "ide" / "opencode" / "opencode.template.json"
+        env_config = load_merged_env_config(source_dir)
+        convert_to_opencode_mcp(source_mcp_file, opencode_dir / "opencode.json", force, opencode_template, env_config)
 
-    copy_skills_safe(source_skills_dir, opencode_skills_dir, ".opencode/skills/", force)
-
-    write_skills_index(source_skills_dir, opencode_skills_dir / "README.md", "OpenCode", force)
+    if "skill" in SCOPE:
+        copy_skills_safe(source_skills_dir, opencode_skills_dir, ".opencode/skills/", force)
+        write_skills_index(source_skills_dir, opencode_skills_dir / "README.md", "OpenCode", force)
     return "opencode"
 
 
@@ -1283,20 +1311,21 @@ def init_idea(target_dir: Path, source_rules_dir: Path, source_mcp_file: Path,
 
     idea_dir.mkdir(parents=True, exist_ok=True)
 
-    copy_skills_safe(source_skills_dir, idea_skills_dir, ".idea/skills/", force)
+    if "skill" in SCOPE:
+        copy_skills_safe(source_skills_dir, idea_skills_dir, ".idea/skills/", force)
+        write_skills_index(source_skills_dir, idea_skills_dir / "README.md", "IDEA", force)
 
-    write_skills_index(source_skills_dir, idea_skills_dir / "README.md", "IDEA", force)
+    if "mcp" in SCOPE:
+        if not acp_src.exists():
+            print(f"{COLOR_YELLOW}[!] acp.json source not found: {acp_src}{COLOR_RESET}")
+            return "idea"
 
-    if not acp_src.exists():
-        print(f"{COLOR_YELLOW}[!] acp.json source not found: {acp_src}{COLOR_RESET}")
-        return "idea"
+        copied = _deploy_acp_to_jetbrains(acp_src, force)
 
-    copied = _deploy_acp_to_jetbrains(acp_src, force)
-
-    if copied == 0:
-        print(f"{COLOR_YELLOW}[!] No JetBrains IDE config dirs found or all skipped{COLOR_RESET}")
-    else:
-        print(f"{COLOR_GREEN}[OK] Deployed acp.json to {copied} JetBrains IDE(s){COLOR_RESET}")
+        if copied == 0:
+            print(f"{COLOR_YELLOW}[!] No JetBrains IDE config dirs found or all skipped{COLOR_RESET}")
+        else:
+            print(f"{COLOR_GREEN}[OK] Deployed acp.json to {copied} JetBrains IDE(s){COLOR_RESET}")
 
     return "idea"
 
@@ -1326,7 +1355,19 @@ def main() -> None:
         action="store_true",
         help="Force overwrite existing config"
     )
+    parser.add_argument(
+        "--scope",
+        default="llm,mcp,skill,plugin",
+        help="Comma-separated scopes to sync: llm,mcp,skill,plugin,rules (default: all)"
+    )
     args = parser.parse_args()
+
+    # 解析 scope（全局变量，供各 init_xxx 函数判断）
+    global SCOPE
+    SCOPE = set(s.strip().lower() for s in args.scope.split(",") if s.strip())
+    # 兼容：rules 归入 rules 同步；plugin 单独处理
+    if not SCOPE:
+        SCOPE = {"llm", "mcp", "skill", "plugin", "rules"}
 
     script_dir = Path(__file__).resolve().parent
 

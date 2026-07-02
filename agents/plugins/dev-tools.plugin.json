@@ -5,14 +5,14 @@
   "author": "MyAgentPlugin",
   "mcpServers": {},
   "skills": [
-    "restful-api-design-skill",
-    "systematic-debugging",
-    "test-driven-development",
-    "receiving-code-review",
-    "requesting-code-review",
-    "verification-before-completion",
-    "playwright-master",
-    "pptx",
-    "screenshot"
+    { "name": "restful-api-design-skill", "description": "RESTful API 设计与接口契约" },
+    { "name": "systematic-debugging", "description": "系统化调试方法论" },
+    { "name": "test-driven-development", "description": "测试驱动开发" },
+    { "name": "receiving-code-review", "description": "接收代码审查反馈" },
+    { "name": "requesting-code-review", "description": "请求代码审查" },
+    { "name": "verification-before-completion", "description": "完成前验证" },
+    { "name": "playwright-master", "description": "Playwright 浏览器自动化" },
+    { "name": "pptx", "description": "PowerPoint 文件操作" },
+    { "name": "screenshot", "description": "截图能力" }
   ]
 }

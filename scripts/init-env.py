@@ -743,6 +743,89 @@ def invoke_generate_step(
     print()
 
 
+def invoke_mcp_generate_step(flat_config: dict, mcp_yaml_file: Path, output_file: Path) -> None:
+    """从 mcp.yaml 读取 mcpServers（含 ${KEY} 占位符），替换占位符后生成 mcp.json。
+    mcp.yaml 现统一存放 mcpServers（服务定义）+ mcp（密钥）。"""
+    print(f"{COLOR_CYAN}========================================{COLOR_RESET}")
+    print(f"{COLOR_CYAN}  Step: Generate mcp.json from mcp.yaml{COLOR_RESET}")
+    print(f"{COLOR_CYAN}========================================{COLOR_RESET}")
+    print()
+
+    if not mcp_yaml_file.exists():
+        print(f"{COLOR_RED}[ERROR] mcp.yaml not found: {mcp_yaml_file}{COLOR_RESET}")
+        sys.exit(1)
+
+    print(f"{COLOR_GREEN}Source   : {mcp_yaml_file}{COLOR_RESET}")
+    print(f"{COLOR_GREEN}Output   : {output_file}{COLOR_RESET}")
+    print()
+
+    try:
+        mcp_data = load_env_config_file(mcp_yaml_file) or {}
+    except Exception as e:
+        print(f"{COLOR_RED}[ERROR] 解析 mcp.yaml 失败: {e}{COLOR_RESET}")
+        sys.exit(1)
+
+    mcp_servers = mcp_data.get("mcpServers", {}) if isinstance(mcp_data, dict) else {}
+    # 过滤掉 disabled 的服务（不生成到 mcp.json，从而不同步到 IDE）
+    enabled_servers = {
+        name: cfg for name, cfg in mcp_servers.items()
+        if not (isinstance(cfg, dict) and (cfg.get("disabled") is True or cfg.get("disabled") == "true"))
+    }
+    skipped = len(mcp_servers) - len(enabled_servers)
+    if skipped:
+        print(f"  {COLOR_DARKGRAY}[SKIP] 跳过 {skipped} 个 disabled 的 MCP 服务{COLOR_RESET}")
+    # 序列化为 JSON 文本以复用占位符替换逻辑
+    template_content = json.dumps({"mcpServers": enabled_servers}, indent=2, ensure_ascii=False) + "\n"
+
+    replaced = 0
+    env_map = {k: str(v) if v is not None else "" for k, v in flat_config.items()}
+    for key, value in env_map.items():
+        placeholder = "${" + key + "}"
+        if placeholder in template_content:
+            template_content = template_content.replace(placeholder, value)
+            print(f"  {COLOR_GREEN}[REPLACED] {placeholder}{COLOR_RESET}")
+            replaced += 1
+
+    default_replaced = 0
+    for m in re.finditer(r"\$\{(\w+):-(.*?)\}", template_content):
+        var_name = m.group(1)
+        default_value = m.group(2)
+        full_match = m.group(0)
+        resolved = env_map.get(var_name, default_value)
+        template_content = template_content.replace(full_match, resolved)
+        if var_name in env_map:
+            print(f"  {COLOR_GREEN}[REPLACED] {full_match} -> (env){resolved}{COLOR_RESET}")
+        else:
+            print(f"  {COLOR_CYAN}[DEFAULT] {full_match} -> {resolved}{COLOR_RESET}")
+        default_replaced += 1
+    replaced += default_replaced
+
+    # 剪枝未解析占位符的 mcpServers 子项
+    new_content, pruned_map = prune_unresolved_blocks(template_content)
+    if pruned_map:
+        template_content = new_content
+        print()
+        print(f"  {COLOR_YELLOW}[PRUNE] 移除未配置的子项（占位符未解析）:{COLOR_RESET}")
+        for parent, names in pruned_map.items():
+            for n in names:
+                print(f"    - {parent}.{n}")
+
+    remaining = re.findall(r"\$\{(\w+)\}", template_content)
+    if remaining:
+        print()
+        print(f"  {COLOR_YELLOW}[WARN] Unresolved placeholders (missing in llm.yaml/mcp.yaml):{COLOR_RESET}")
+        seen = sorted(set(remaining))
+        for p in seen:
+            print(f"    - ${{{p}}}")
+
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_text(template_content, encoding="utf-8")
+
+    print()
+    print(f"  {COLOR_CYAN}Result: {replaced} placeholder(s) replaced, output={output_file}{COLOR_RESET}")
+    print()
+
+
 def _inject_opencode_models(opencode_file: Path, env_config: dict) -> None:
     if not opencode_file.exists():
         return
@@ -796,8 +879,8 @@ def main():
     )
     parser.add_argument(
         "--template-file",
-        default=str(PROJECT_ROOT / "agents" / "mcp" / "mcp.template.json"),
-        help="Path to mcp.template.json",
+        default=str(PROJECT_ROOT / "mcp.yaml"),
+        help="Path to mcp.yaml (含 mcpServers + mcp 密钥；MCP 生成源)",
     )
     parser.add_argument(
         "--output-file",
@@ -881,7 +964,9 @@ def main():
         invoke_env_step(flat_config, args.scope, args.force)
 
     if args.action in ("Generate", "All"):
-        invoke_generate_step(flat_config, template_file, output_file)
+        # MCP: 从 mcp.yaml（含 mcpServers + mcp 密钥）生成 mcp.json
+        mcp_yaml_file = PROJECT_ROOT / "mcp.yaml"
+        invoke_mcp_generate_step(flat_config, mcp_yaml_file, output_file)
 
         opencode_template = PROJECT_ROOT / "ide" / "opencode" / "opencode.template.json"
         opencode_output = PROJECT_ROOT / "ide" / "opencode" / "opencode.json"

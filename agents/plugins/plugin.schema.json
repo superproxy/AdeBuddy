@@ -50,25 +50,17 @@
     },
     "skills": {
       "type": "array",
-      "description": "需要安装的技能列表",
+      "description": "需要安装的技能列表（统一使用对象格式）",
       "items": {
-        "oneOf": [
-          {
-            "type": "string",
-            "description": "技能名称（本地缓存优先）"
-          },
-          {
-            "type": "object",
-            "required": ["name", "source"],
-            "properties": {
-              "name": { "type": "string", "description": "skill 名称" },
-              "source": { "type": "string", "description": "skill 来源：owner/repo 或 full URL" },
-              "skill": { "type": "string", "description": "skill 名称（如果与 name 不同）" },
-              "url": { "type": "string", "description": "第三方市场 URL（如果不是 GitHub）" },
-              "description": { "type": "string", "description": "skill 描述" }
-            }
-          }
-        ]
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "description": "skill 名称" },
+          "source": { "type": "string", "description": "skill 来源：owner/repo 或 full URL（本地技能可省略）" },
+          "skill": { "type": "string", "description": "skill 名称（如果与 name 不同）" },
+          "url": { "type": "string", "description": "第三方市场 URL（如果不是 GitHub）" },
+          "description": { "type": "string", "description": "skill 描述" }
+        }
       }
     },
     "envVars": {

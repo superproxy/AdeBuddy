@@ -98,19 +98,21 @@ def update_env_file(env_path: Path, plugin_config: dict) -> None:
 
 
 def update_mcp_template(mcp_template_path: Path, plugin_config: dict) -> None:
-    """更新MCP配置模板"""
+    """更新 MCP 配置（mcp.yaml，统一存放 mcpServers + mcp 密钥）。
+    mcp_template_path 现指 mcp.yaml；保留 mcp 密钥段，仅合并 mcpServers。"""
     if "mcpServers" not in plugin_config:
         return
 
     if not mcp_template_path.exists():
-        print(f"{COLOR_YELLOW}[!] MCP模板文件不存在，创建新文件: {mcp_template_path}{COLOR_RESET}")
-        mcp_config = {"mcpServers": {}}
+        print(f"{COLOR_YELLOW}[!] MCP配置文件不存在，创建新文件: {mcp_template_path}{COLOR_RESET}")
+        mcp_config = {"mcpServers": {}, "mcp": {}}
     else:
-        with open(mcp_template_path, "r", encoding="utf-8") as f:
-            mcp_config = json.load(f)
+        mcp_config = load_env_config_file(mcp_template_path)
+        if not isinstance(mcp_config, dict):
+            mcp_config = {}
 
     # 确保有mcpServers字段
-    if "mcpServers" not in mcp_config:
+    if "mcpServers" not in mcp_config or not isinstance(mcp_config.get("mcpServers"), dict):
         mcp_config["mcpServers"] = {}
 
     # 更新MCP服务器配置
@@ -125,9 +127,8 @@ def update_mcp_template(mcp_template_path: Path, plugin_config: dict) -> None:
 
     if updated:
         mcp_template_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(mcp_template_path, "w", encoding="utf-8") as f:
-            json.dump(mcp_config, f, indent=2, ensure_ascii=False)
-        print(f"{COLOR_GREEN}[OK] MCP模板已更新: {mcp_template_path}{COLOR_RESET}")
+        save_env_config_file(mcp_template_path, mcp_config)
+        print(f"{COLOR_GREEN}[OK] MCP配置已更新: {mcp_template_path}{COLOR_RESET}")
 
 
 def parse_shorthand(source_str: str) -> tuple[str, str]:
@@ -483,8 +484,8 @@ def main() -> None:
     )
     install_parser.add_argument(
         "--mcp-template",
-        default="agents/mcp/mcp.template.json",
-        help="MCP模板文件路径 (默认: agents/mcp/mcp.template.json)"
+        default="mcp.yaml",
+        help="MCP配置文件路径 (默认: mcp.yaml，含 mcpServers + mcp 密钥)"
     )
     install_parser.add_argument(
         "--dry-run",
@@ -655,8 +656,8 @@ def main() -> None:
     )
     install_parser.add_argument(
         "--mcp-template",
-        default="agents/mcp/mcp.template.json",
-        help="MCP模板文件路径 (默认: agents/mcp/mcp.template.json)"
+        default="mcp.yaml",
+        help="MCP配置文件路径 (默认: mcp.yaml，含 mcpServers + mcp 密钥)"
     )
     install_parser.add_argument(
         "--dry-run",
