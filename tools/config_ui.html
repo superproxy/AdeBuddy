@@ -737,6 +737,8 @@ createApp({
       dragOverIdeKey.value = '';
     }
     const IDE_ORDER_KEY = 'myagent.ideOrder';
+    const IDE_SYNC_TARGET_KEY = 'myagent.ideSyncTargets';
+    const IDE_AUTOSYNC_KEY = 'myagent.autoSync';
     function saveIdeOrder() {
       try { localStorage.setItem(IDE_ORDER_KEY, JSON.stringify(ideList.value.map(i => i.key))); } catch (e) {}
     }
@@ -759,12 +761,13 @@ createApp({
     const ideLog = ref('');
     // 同步范围勾选（默认全部勾选）
     const syncScopes = reactive({ llm: true, mcp: true, skill: true, rules: true });
-    // 共享的同步目标 IDE 列表（多选）
-    const syncTargetIdes = ref(['Codex']);
+    // 共享的同步目标 IDE 列表（多选，从 localStorage 恢复）
+    const _savedTargets = (() => { try { return JSON.parse(localStorage.getItem(IDE_SYNC_TARGET_KEY)); } catch (e) { return null; } })();
+    const syncTargetIdes = ref(Array.isArray(_savedTargets) ? _savedTargets : ['Codex']);
     // 当前是否正在同步
     const syncing = ref(false);
-    // 自动同步开关：默认关闭，配置变更 debounce 自动保存+同步
-    const autoSync = ref(false);
+    // 自动同步开关：默认关闭，从 localStorage 恢复；配置变更 debounce 自动保存+同步
+    const autoSync = ref(localStorage.getItem(IDE_AUTOSYNC_KEY) === '1');
     let _autoSyncTimer = null;
     let _isLoading = true; // 加载阶段不触发自动同步
 
@@ -1399,6 +1402,14 @@ createApp({
       },
       { deep: true }
     );
+
+    // 持久化 IDE 选项配置，方便下次启动恢复
+    watch(syncTargetIdes, (v) => {
+      try { localStorage.setItem(IDE_SYNC_TARGET_KEY, JSON.stringify(v)); } catch (e) {}
+    }, { deep: true });
+    watch(autoSync, (v) => {
+      try { localStorage.setItem(IDE_AUTOSYNC_KEY, v ? '1' : '0'); } catch (e) {}
+    });
 
     onMounted(async () => {
       const [llmR, mcpCfgR, skillsR, mcpR, installedR, pluginsR] = await Promise.all([
