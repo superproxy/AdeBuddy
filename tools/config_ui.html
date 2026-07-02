@@ -254,159 +254,176 @@
 
     <!-- ===================== 插件构建 ===================== -->
     <div v-show="tab === 'plugin-build'" class="space-y-3">
-      <div class="grid grid-cols-[18%_28%_24%_30%] gap-3">
-      <!-- 左侧：从 IDE 导入 -->
-      <div class="bg-white rounded-xl shadow-card p-3 max-h-[75vh] overflow-y-auto">
-        <h3 class="text-xs font-semibold mb-2 pb-2 border-b border-gray-100">从 IDE 导入</h3>
-        <button @click="importFromIde" :disabled="importing"
-                class="w-full px-3 py-2 mb-3 text-xs font-medium text-white rounded-lg bg-gradient-to-r from-brand-500 to-brand-600 hover:from-brand-600 hover:to-brand-700 disabled:opacity-50 shadow-sm">
-          {{ importing ? '扫描中...' : (ideImportStats ? '重新扫描' : '开始扫描 IDE') }}
-        </button>
-        <div v-if="ideImportStats" class="text-[10px] text-ink-500 mb-2">
-          扫描 {{ ideImportStats.files_scanned }} 文件 / {{ ideImportStats.dirs_scanned }} 目录
+      <!-- 向导 Stepper -->
+      <div class="bg-white rounded-xl shadow-card p-3">
+        <div class="flex items-center gap-1">
+          <template v-for="(s, i) in wizardSteps" :key="i">
+            <div @click="wizardGoto(i)" :class="['flex items-center gap-1.5 cursor-pointer px-2.5 py-1.5 rounded-lg transition', wizardStep === i ? 'bg-brand-500 text-white' : (wizardStep > i ? 'bg-brand-50 text-brand-600' : 'text-ink-500 hover:bg-ink-100')]">
+              <span :class="['w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold', wizardStep === i ? 'bg-white text-brand-600' : (wizardStep > i ? 'bg-brand-500 text-white' : 'bg-ink-200 text-ink-500')]">{{ wizardStep > i ? '✓' : (i + 1) }}</span>
+              <span class="text-xs font-medium">{{ s.title }}</span>
+            </div>
+            <span v-if="i < wizardSteps.length - 1" :class="['flex-1 h-0.5', wizardStep > i ? 'bg-brand-400' : 'bg-ink-200']"></span>
+          </template>
         </div>
-        <div v-if="!ideImportStats" class="text-center text-ink-400 text-[11px] py-4">
-          点击上方按钮扫描本地所有 IDE 的 MCP、Skills、LLM 配置
-        </div>
-        <!-- LLM 配置（仅展示） -->
-        <div v-if="ideImport.llm_providers && ideImport.llm_providers.length">
-          <div class="flex items-center justify-between mb-1">
-            <h4 class="text-[11px] font-semibold text-ink-700">LLM ({{ ideImport.llm_providers.length }})</h4>
-            <span class="text-[10px] text-ink-400">仅展示</span>
+        <div class="text-[10px] text-ink-500 mt-1.5 ml-1">{{ wizardSteps[wizardStep] && wizardSteps[wizardStep].desc }}</div>
+      </div>
+
+      <!-- 步骤内容 -->
+      <div class="bg-white rounded-xl shadow-card p-4 min-h-[400px]">
+        <!-- Step 0: 基本信息 + 扫描 IDE -->
+        <div v-show="wizardStep === 0" class="space-y-3">
+          <div class="flex gap-1.5 mb-2">
+            <select v-model="selectedPluginFile" class="flex-1 px-2 py-1 text-[11px] border border-ink-300 rounded">
+              <option value="">-- 加载已有插件 --</option>
+              <option v-for="p in plugins" :key="p.file" :value="p.file">{{ p.name }} ({{ p.skills_count }}s/{{ p.mcp_count }}m)</option>
+            </select>
+            <button @click="loadExistingPlugin" class="px-2 py-1 text-[11px] bg-ink-100 rounded hover:bg-ink-300">加载</button>
+            <button @click="deleteExistingPlugin" class="px-2 py-1 text-[11px] bg-red-50 text-red-500 rounded hover:bg-red-100">删</button>
+            <button @click="newPlugin" class="px-2 py-1 text-[11px] text-brand-600 hover:underline">新建</button>
           </div>
-          <div class="space-y-1 mb-3">
-            <div v-for="llm in ideImport.llm_providers" :key="llm.provider + llm.protocol"
-                 :class="['p-1.5 border rounded text-[11px]', llm.active ? 'border-green-400 bg-green-50/30' : 'border-ink-200']">
-              <div class="flex items-center gap-1">
-                <span class="font-medium">{{ llm.provider }}</span>
-                <span class="text-[9px] text-ink-500">{{ llm.protocol }}</span>
-                <span v-if="llm.active" class="text-[9px] text-green-600">active</span>
-                <span v-if="llm.has_key" class="text-[9px] text-green-600 ml-auto">✓ key</span>
-                <span v-else class="text-[9px] text-ink-400 ml-auto">无key</span>
+          <div class="space-y-2">
+            <div class="flex items-center gap-2"><label class="text-[11px] text-ink-500 w-16">name *</label><input v-model="pluginForm.name" placeholder="my-plugin" class="flex-1 px-2 py-1 text-xs border border-ink-300 rounded"></div>
+            <div class="flex items-center gap-2"><label class="text-[11px] text-ink-500 w-16">version</label><input v-model="pluginForm.version" class="flex-1 px-2 py-1 text-xs border border-ink-300 rounded"></div>
+            <div class="flex items-center gap-2"><label class="text-[11px] text-ink-500 w-16">desc</label><input v-model="pluginForm.description" class="flex-1 px-2 py-1 text-xs border border-ink-300 rounded"></div>
+            <div class="flex items-center gap-2"><label class="text-[11px] text-ink-500 w-16">author</label><input v-model="pluginForm.author" class="flex-1 px-2 py-1 text-xs border border-ink-300 rounded"></div>
+          </div>
+          <div class="border-t border-gray-100 pt-3 mt-3">
+            <button @click="importFromIde" :disabled="importing"
+                    class="px-4 py-2 text-xs font-medium text-white rounded-lg bg-gradient-to-r from-brand-500 to-brand-600 hover:from-brand-600 hover:to-brand-700 disabled:opacity-50 shadow-sm">
+              {{ importing ? '扫描中...' : (ideImportStats ? '重新扫描 IDE' : '一键扫描本地 IDE 配置') }}
+            </button>
+            <div v-if="ideImportStats" class="text-[11px] text-green-600 mt-2">
+              ✓ 扫描完成: {{ ideImportStats.mcp_count }} MCP、{{ ideImportStats.skill_count }} skill、{{ ideImportStats.llm_count }} LLM（{{ ideImportStats.files_scanned }} 文件 / {{ ideImportStats.dirs_scanned }} 目录）
+            </div>
+            <div v-else class="text-[11px] text-ink-500 mt-2">扫描后将可在后续步骤中勾选导入 MCP / Skills / LLM</div>
+          </div>
+        </div>
+
+        <!-- Step 1: LLM -->
+        <div v-show="wizardStep === 1" class="space-y-2">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-semibold">LLM Provider <span class="text-[10px] text-ink-500 font-normal">({{ selectedLlm.length }}/{{ (ideImport.llm_providers || []).length }})</span></h3>
+            <button v-if="ideImport.llm_providers && ideImport.llm_providers.length" @click="applyImportedLlm" class="text-[11px] text-brand-600 hover:underline">全选导入</button>
+          </div>
+          <div v-if="!(ideImport.llm_providers && ideImport.llm_providers.length)" class="text-center text-ink-400 text-xs py-8">
+            未扫描到 LLM 配置，请回到第一步扫描 IDE
+          </div>
+          <div v-else class="grid grid-cols-2 gap-1.5">
+            <label v-for="l in ideImport.llm_providers" :key="llmKey(l)"
+                   :class="['flex items-start gap-1.5 p-2 border rounded-lg cursor-pointer transition', selectedLlm.includes(llmKey(l)) ? 'border-brand-500 bg-brand-50' : 'border-ink-300 hover:border-brand-400']">
+              <input type="checkbox" :checked="selectedLlm.includes(llmKey(l))" @change="toggleLlm(llmKey(l))" class="mt-0.5 w-3.5 h-3.5 accent-brand-500">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-1 flex-wrap">
+                  <span class="font-medium text-xs">{{ l.provider }}</span>
+                  <span class="text-[9px] px-1 py-0.5 bg-ink-100 rounded">{{ l.protocol }}</span>
+                  <span v-if="l.active" class="text-[9px] px-1 py-0.5 bg-green-100 text-green-700 rounded">active</span>
+                  <span v-if="l.has_key" class="text-[9px] text-green-600">✓key</span>
+                </div>
+                <div class="text-[10px] text-ink-500 truncate">{{ l.base_url }}</div>
+                <div class="text-[9px] text-ink-400">{{ l.model_count }} 模型</div>
               </div>
-              <div class="text-[10px] text-ink-500 truncate">{{ llm.base_url }}</div>
-              <div class="text-[9px] text-ink-400">{{ llm.model_count }} 模型</div>
-            </div>
-          </div>
-        </div>
-        <!-- MCP（可勾选导入） -->
-        <div v-if="ideImport.mcpServers">
-          <div class="flex items-center justify-between mb-1">
-            <h4 class="text-[11px] font-semibold text-ink-700">MCP ({{ ideImportStats.mcp_count }})</h4>
-            <button @click="importAllIdeMcp" class="text-[10px] text-brand-600 hover:underline">全选导入</button>
-          </div>
-          <div class="space-y-1 mb-3">
-            <label v-for="(cfg, name) in ideImport.mcpServers" :key="name"
-                   :class="['flex items-center gap-1 p-1 border rounded text-[11px] cursor-pointer', importedIdeMcp.includes(name) ? 'border-brand-400 bg-brand-50/30' : 'border-ink-200 hover:border-brand-300']">
-              <input type="checkbox" :value="name" v-model="importedIdeMcp" class="w-3 h-3 accent-brand-500">
-              <span class="truncate flex-1">{{ name }}</span>
             </label>
           </div>
-          <button v-if="importedIdeMcp.length" @click="applyImportedMcp" class="w-full px-2 py-1 text-[11px] bg-brand-500 text-white rounded hover:bg-brand-600 mb-2">
-            导入 {{ importedIdeMcp.length }} 个 MCP →
-          </button>
         </div>
-        <!-- Skills（可勾选导入） -->
-        <div v-if="ideImport.skills">
-          <div class="flex items-center justify-between mb-1">
-            <h4 class="text-[11px] font-semibold text-ink-700">Skills ({{ ideImportStats.skill_count }})</h4>
-            <button @click="importAllIdeSkills" class="text-[10px] text-brand-600 hover:underline">全选导入</button>
-          </div>
-          <div class="space-y-1">
-            <label v-for="s in ideImport.skills" :key="s.name"
-                   :class="['flex items-center gap-1 p-1 border rounded text-[11px] cursor-pointer', importedIdeSkills.includes(s.name) ? 'border-brand-400 bg-brand-50/30' : 'border-ink-200 hover:border-brand-300']">
-              <input type="checkbox" :value="s.name" v-model="importedIdeSkills" class="w-3 h-3 accent-brand-500">
-              <span class="truncate flex-1" :title="s.sources && s.sources.join(', ')">{{ s.name }}</span>
-            </label>
-          </div>
-          <button v-if="importedIdeSkills.length" @click="applyImportedSkills" class="w-full px-2 py-1 text-[11px] bg-brand-500 text-white rounded hover:bg-brand-600 mt-2">
-            导入 {{ importedIdeSkills.length }} 个 Skill →
-          </button>
-        </div>
-      </div>
-      <!-- 技能目录 -->
-      <div class="bg-white rounded-xl shadow-card p-3 max-h-[75vh] overflow-y-auto">
-        <h3 class="text-xs font-semibold mb-2 pb-2 border-b border-gray-100">技能目录</h3>
-        <div class="flex gap-1.5 mb-2 flex-wrap">
-          <select v-model="skillFilter.cat" class="px-2 py-1 text-[11px] border border-ink-300 rounded">
-            <option value="">全部分类</option>
-            <option v-for="c in skillCategories" :key="c">{{ c }}</option>
-          </select>
-          <select v-model="skillFilter.role" class="px-2 py-1 text-[11px] border border-ink-300 rounded">
-            <option value="">全部角色</option>
-            <option v-for="r in skillRoles" :key="r">{{ r }}</option>
-          </select>
-          <input v-model="skillFilter.text" placeholder="搜索..." class="flex-1 min-w-[100px] px-2 py-1 text-[11px] border border-ink-300 rounded">
-        </div>
-        <div class="space-y-1.5">
-          <div v-for="s in filteredLocalSkills" :key="s.skill_name"
-               @click="toggleSkill(s.skill_name)"
-               :class="['p-2 border rounded-md cursor-pointer transition', selectedSkills.includes(s.skill_name) ? 'border-brand-500 bg-brand-50' : 'border-ink-300 hover:border-brand-500 hover:bg-brand-50/30']">
-            <div class="flex items-center gap-1.5">
-              <input type="checkbox" :checked="selectedSkills.includes(s.skill_name)" @click.stop="toggleSkill(s.skill_name)" class="accent-brand-500">
-              <span class="font-medium text-xs">{{ s.skill_name }}</span>
+
+        <!-- Step 2: MCP -->
+        <div v-show="wizardStep === 2" class="space-y-2">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-semibold">MCP 服务 <span class="text-[10px] text-ink-500 font-normal">({{ selectedMcp.length }})</span></h3>
+            <div class="flex gap-2">
+              <button v-if="ideImport.mcpServers" @click="applyImportedMcp" class="text-[11px] text-brand-600 hover:underline">导入扫描结果({{ importedIdeMcp.length }})</button>
+              <button @click="toggleAllMcp" class="text-[11px] text-brand-600 hover:underline">全选/反选</button>
             </div>
-            <div class="mt-1"><span class="px-1 py-0.5 text-[10px] bg-ink-100 rounded">{{ s.category }}</span> <span v-if="s.role" class="px-1 py-0.5 text-[10px] bg-ink-100 rounded">{{ s.role }}</span></div>
-            <div class="text-[11px] text-ink-500 mt-0.5 line-clamp-2">{{ s.description }}</div>
           </div>
-          <div v-if="!filteredLocalSkills.length" class="text-center text-ink-500 text-xs py-4">无匹配技能</div>
-        </div>
-      </div>
-      <!-- MCP 目录 -->
-      <div class="bg-white rounded-xl shadow-card p-3 max-h-[75vh] overflow-y-auto">
-        <h3 class="text-xs font-semibold mb-2 pb-2 border-b border-gray-100">MCP 目录</h3>
-        <input v-model="mcpFilterText" placeholder="过滤 MCP..." class="w-full px-2 py-1 text-[11px] border border-ink-300 rounded mb-2">
-        <div class="space-y-1.5">
-          <div v-for="(_, name) in (mcpTemplate.mcpServers || {})" :key="name"
-               v-show="!mcpFilterText || name.toLowerCase().includes(mcpFilterText.toLowerCase())"
-               @click="toggleMcp(name)"
-               :class="['p-2 border rounded-md cursor-pointer transition', selectedMcp.includes(name) ? 'border-brand-500 bg-brand-50' : 'border-ink-300 hover:border-brand-500']">
-            <div class="flex items-center gap-1.5">
-              <input type="checkbox" :checked="selectedMcp.includes(name)" @click.stop="toggleMcp(name)" class="accent-brand-500">
-              <span class="font-medium text-xs">{{ name }}</span>
+          <input v-model="mcpFilterText" placeholder="过滤 MCP..." class="w-full px-2 py-1 text-[11px] border border-ink-300 rounded mb-1">
+          <!-- 扫描到的 IDE MCP（可勾选导入到模板） -->
+          <div v-if="ideImport.mcpServers" class="mb-2">
+            <div class="text-[10px] text-ink-500 mb-1">从 IDE 扫描到 ({{ Object.keys(ideImport.mcpServers).length }}):</div>
+            <div class="grid grid-cols-2 gap-1">
+              <label v-for="(cfg, name) in ideImport.mcpServers" :key="'ide_'+name"
+                     v-show="!mcpFilterText || name.toLowerCase().includes(mcpFilterText.toLowerCase())"
+                     :class="['flex items-center gap-1 p-1 border rounded text-[11px] cursor-pointer', importedIdeMcp.includes(name) ? 'border-brand-400 bg-brand-50/30' : 'border-ink-200 hover:border-brand-300']">
+                <input type="checkbox" :value="name" v-model="importedIdeMcp" class="w-3 h-3 accent-brand-500">
+                <span class="truncate flex-1">{{ name }}</span>
+                <span v-if="selectedMcp.includes(name)" class="text-[9px] text-green-600">✓</span>
+              </label>
+            </div>
+          </div>
+          <!-- 模板中的 MCP（最终选择） -->
+          <div class="border-t border-gray-100 pt-2">
+            <div class="text-[10px] text-ink-500 mb-1">可选 MCP ({{ Object.keys(mcpTemplate.mcpServers || {}).length }}):</div>
+            <div class="grid grid-cols-2 gap-1">
+              <div v-for="(_, name) in (mcpTemplate.mcpServers || {})" :key="'tpl_'+name"
+                   v-show="!mcpFilterText || name.toLowerCase().includes(mcpFilterText.toLowerCase())"
+                   @click="toggleMcp(name)"
+                   :class="['p-1.5 border rounded-md cursor-pointer transition', selectedMcp.includes(name) ? 'border-brand-500 bg-brand-50' : 'border-ink-300 hover:border-brand-500']">
+                <div class="flex items-center gap-1">
+                  <input type="checkbox" :checked="selectedMcp.includes(name)" @click.stop="toggleMcp(name)" class="w-3 h-3 accent-brand-500">
+                  <span class="text-xs truncate">{{ name }}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-      <!-- 插件定义 -->
-      <div class="bg-white rounded-xl shadow-card p-3 max-h-[75vh] overflow-y-auto">
-        <h3 class="text-xs font-semibold mb-2 pb-2 border-b border-gray-100">插件定义</h3>
-        <div class="flex gap-1.5 mb-3">
-          <select v-model="selectedPluginFile" class="flex-1 px-2 py-1 text-[11px] border border-ink-300 rounded">
-            <option value="">-- 加载已有插件 --</option>
-            <option v-for="p in plugins" :key="p.file" :value="p.file">{{ p.name }} ({{ p.skills_count }}s/{{ p.mcp_count }}m)</option>
-          </select>
-          <button @click="loadExistingPlugin" class="px-2 py-1 text-[11px] bg-ink-100 rounded hover:bg-ink-300">加载</button>
-          <button @click="deleteExistingPlugin" class="px-2 py-1 text-[11px] bg-red-50 text-red-500 rounded hover:bg-red-100">删</button>
-          <button @click="newPlugin" class="px-2 py-1 text-[11px] text-brand-600 hover:underline">新建</button>
-        </div>
-        <div class="space-y-2">
-          <div class="flex items-center gap-2"><label class="text-[11px] text-ink-500 w-16">name *</label><input v-model="pluginForm.name" placeholder="my-plugin" class="flex-1 px-2 py-1 text-xs border border-ink-300 rounded"></div>
-          <div class="flex items-center gap-2"><label class="text-[11px] text-ink-500 w-16">version</label><input v-model="pluginForm.version" class="flex-1 px-2 py-1 text-xs border border-ink-300 rounded"></div>
-          <div class="flex items-center gap-2"><label class="text-[11px] text-ink-500 w-16">desc</label><input v-model="pluginForm.description" class="flex-1 px-2 py-1 text-xs border border-ink-300 rounded"></div>
-          <div class="flex items-center gap-2"><label class="text-[11px] text-ink-500 w-16">author</label><input v-model="pluginForm.author" class="flex-1 px-2 py-1 text-xs border border-ink-300 rounded"></div>
-        </div>
-        <h4 class="text-[11px] text-ink-700 mt-3 mb-1">已选 Skills ({{ selectedSkills.length }})</h4>
-        <div class="border border-dashed border-ink-300 rounded p-2 min-h-[60px] space-y-1">
-          <div v-for="s in selectedSkills" :key="s" class="flex justify-between items-center text-xs bg-brand-50 px-2 py-1 rounded">
-            <span>{{ s }}</span><button @click="toggleSkill(s)" class="text-red-500">×</button>
+
+        <!-- Step 3: Skills -->
+        <div v-show="wizardStep === 3" class="space-y-2">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-semibold">技能 <span class="text-[10px] text-ink-500 font-normal">({{ selectedSkills.length }})</span></h3>
+            <div class="flex gap-2">
+              <button v-if="ideImport.skills" @click="applyImportedSkills" class="text-[11px] text-brand-600 hover:underline">导入扫描结果</button>
+            </div>
           </div>
-          <div v-if="!selectedSkills.length" class="text-center text-ink-500 text-[11px] py-2">未选择</div>
-        </div>
-        <h4 class="text-[11px] text-ink-700 mt-2 mb-1">已选 MCP ({{ selectedMcp.length }})</h4>
-        <div class="border border-dashed border-ink-300 rounded p-2 min-h-[40px] space-y-1">
-          <div v-for="m in selectedMcp" :key="m" class="flex justify-between items-center text-xs bg-brand-50 px-2 py-1 rounded">
-            <span>{{ m }}</span><button @click="toggleMcp(m)" class="text-red-500">×</button>
+          <div class="flex gap-1.5 mb-1 flex-wrap">
+            <select v-model="skillFilter.cat" class="px-2 py-1 text-[11px] border border-ink-300 rounded">
+              <option value="">全部分类</option>
+              <option v-for="c in skillCategories" :key="c">{{ c }}</option>
+            </select>
+            <select v-model="skillFilter.role" class="px-2 py-1 text-[11px] border border-ink-300 rounded">
+              <option value="">全部角色</option>
+              <option v-for="r in skillRoles" :key="r">{{ r }}</option>
+            </select>
+            <input v-model="skillFilter.text" placeholder="搜索..." class="flex-1 min-w-[100px] px-2 py-1 text-[11px] border border-ink-300 rounded">
           </div>
-          <div v-if="!selectedMcp.length" class="text-center text-ink-500 text-[11px] py-2">未选择</div>
+          <div class="grid grid-cols-2 gap-1.5 max-h-[55vh] overflow-y-auto">
+            <div v-for="s in filteredLocalSkills" :key="s.skill_name"
+                 @click="toggleSkill(s.skill_name)"
+                 :class="['p-2 border rounded-md cursor-pointer transition', selectedSkills.includes(s.skill_name) ? 'border-brand-500 bg-brand-50' : 'border-ink-300 hover:border-brand-500 hover:bg-brand-50/30']">
+              <div class="flex items-center gap-1.5">
+                <input type="checkbox" :checked="selectedSkills.includes(s.skill_name)" @click.stop="toggleSkill(s.skill_name)" class="accent-brand-500">
+                <span class="font-medium text-xs">{{ s.skill_name }}</span>
+              </div>
+              <div class="mt-1"><span class="px-1 py-0.5 text-[10px] bg-ink-100 rounded">{{ s.category }}</span> <span v-if="s.role" class="px-1 py-0.5 text-[10px] bg-ink-100 rounded">{{ s.role }}</span></div>
+              <div class="text-[11px] text-ink-500 mt-0.5 line-clamp-2">{{ s.description }}</div>
+            </div>
+          </div>
         </div>
-        <div class="flex gap-1.5 mt-3 flex-wrap items-center">
-          <button @click="previewPlugin" class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded hover:bg-brand-600">预览 JSON</button>
-          <button @click="savePluginFile" class="px-3 py-1.5 text-xs bg-ink-100 rounded hover:bg-ink-300">保存</button>
-          <button @click="installPluginFile" class="px-3 py-1.5 text-xs bg-green-500 text-white rounded hover:bg-green-600">生成配置</button>
-          <span class="text-[10px] text-ink-500 ml-2">使用顶部"同步到 IDE"按钮可一键保存+安装+同步</span>
+
+        <!-- Step 4: 生成 -->
+        <div v-show="wizardStep === 4" class="space-y-3">
+          <h3 class="text-xs font-semibold">预览与生成</h3>
+          <div class="grid grid-cols-3 gap-2 text-center">
+            <div class="bg-brand-50 rounded-lg p-2"><div class="text-lg font-bold text-brand-600">{{ selectedLlm.length }}</div><div class="text-[10px] text-ink-500">LLM</div></div>
+            <div class="bg-brand-50 rounded-lg p-2"><div class="text-lg font-bold text-brand-600">{{ selectedMcp.length }}</div><div class="text-[10px] text-ink-500">MCP</div></div>
+            <div class="bg-brand-50 rounded-lg p-2"><div class="text-lg font-bold text-brand-600">{{ selectedSkills.length }}</div><div class="text-[10px] text-ink-500">Skills</div></div>
+          </div>
+          <div class="text-[11px] text-ink-600">
+            <div><span class="text-ink-400">名称:</span> {{ pluginForm.name || '(未填)' }} v{{ pluginForm.version }}</div>
+            <div><span class="text-ink-400">描述:</span> {{ pluginForm.description || '-' }}</div>
+          </div>
+          <div class="flex gap-1.5 flex-wrap">
+            <button @click="previewPlugin" class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded hover:bg-brand-600">预览 JSON</button>
+            <button @click="savePluginFile" class="px-3 py-1.5 text-xs bg-ink-100 rounded hover:bg-ink-300">保存</button>
+            <button @click="installPluginFile" class="px-3 py-1.5 text-xs bg-green-500 text-white rounded hover:bg-green-600">生成配置</button>
+          </div>
+          <div class="text-[10px] text-ink-500">提示: 使用顶部"同步到 IDE"按钮可一键保存+安装+同步到选定的 IDE</div>
         </div>
-      </div>
+
+        <!-- 向导导航 -->
+        <div class="flex justify-between mt-4 pt-3 border-t border-gray-100">
+          <button @click="wizardPrev" :disabled="wizardStep === 0" class="px-3 py-1.5 text-xs bg-ink-100 rounded hover:bg-ink-300 disabled:opacity-40">← 上一步</button>
+          <button v-if="wizardStep < wizardSteps.length - 1" @click="wizardNext" class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded hover:bg-brand-600">下一步 →</button>
+        </div>
       </div>
     </div>
 
@@ -671,6 +688,8 @@ createApp({
     const ideImportStats = ref(null);  // IDE 导入统计
     const importedIdeMcp = ref([]);  // 导入栏勾选的 MCP
     const importedIdeSkills = ref([]);  // 导入栏勾选的 Skills
+    const selectedLlm = ref([]);  // 已选 LLM（"provider@protocol"）
+    const wizardStep = ref(0);  // 向导当前步骤 0-4
     const pluginForm = reactive({ name: '', version: '1.0.0', description: '', author: 'MyAgentPlugin' });
 
     const mcpTab = ref('market');  // MCP 添加方式子 tab：market / manual
@@ -952,6 +971,7 @@ createApp({
       pluginForm.description = d.description || ''; pluginForm.author = d.author || 'MyAgentPlugin';
       selectedSkills.value = [...(d.skills || [])].map(s => typeof s === 'string' ? s : s.name || s.skill || '');
       selectedMcp.value = Object.keys(d.mcpServers || {});
+      selectedLlm.value = (d.llm || []).map(l => l.provider + '@' + l.protocol);
       toast('已加载: ' + d.name);
     }
     async function deleteExistingPlugin() {
@@ -963,14 +983,26 @@ createApp({
     function newPlugin() {
       selectedPluginFile.value = '';
       pluginForm.name = ''; pluginForm.version = '1.0.0'; pluginForm.description = ''; pluginForm.author = 'MyAgentPlugin';
-      selectedSkills.value = []; selectedMcp.value = [];
+      selectedSkills.value = []; selectedMcp.value = []; selectedLlm.value = [];
+      wizardStep.value = 0;
     }
     function buildPluginConfig() {
+      // 解析 selectedLlm（"provider@protocol"）回完整配置
+      const llmList = selectedLlm.value.map(key => {
+        const [provider, protocol] = key.split('@');
+        const found = (ideImport.value.llm_providers || []).find(l => l.provider === provider && l.protocol === protocol);
+        return {
+          provider, protocol,
+          base_url: found ? found.base_url : '',
+          models: found ? found.models : [],
+        };
+      }).filter(l => l.provider);
       return {
         name: pluginForm.name.trim(), version: pluginForm.version.trim() || '1.0.0',
         description: pluginForm.description.trim(), author: pluginForm.author.trim() || 'MyAgentPlugin',
         mcpServers: Object.fromEntries(selectedMcp.value.map(n => [n, mcpTemplate.mcpServers[n]])),
         skills: selectedSkills.value.map(s => ({ name: s, description: '' })),
+        llm: llmList,
       };
     }
     function previewPlugin() {
@@ -1074,6 +1106,32 @@ createApp({
       selectedSkills.value = Array.from(set);
       toast(`已导入 ${importedIdeSkills.value.length} 个 Skill（新增 ${added}）`);
     }
+    function toggleLlm(key) {
+      const i = selectedLlm.value.indexOf(key);
+      if (i >= 0) selectedLlm.value.splice(i, 1);
+      else selectedLlm.value.push(key);
+    }
+    function llmKey(l) { return l.provider + '@' + l.protocol; }
+    function applyImportedLlm() {
+      const set = new Set(selectedLlm.value);
+      let added = 0;
+      for (const l of (ideImport.value.llm_providers || [])) {
+        const k = llmKey(l);
+        if (!set.has(k)) { set.add(k); added++; }
+      }
+      selectedLlm.value = Array.from(set);
+      toast(`已导入 ${added} 个 LLM 配置`);
+    }
+    const wizardSteps = [
+      { title: '基本信息', desc: '插件名 + 扫描 IDE' },
+      { title: 'LLM', desc: '选择 LLM Provider' },
+      { title: 'MCP', desc: '选择 MCP 服务' },
+      { title: 'Skills', desc: '选择技能' },
+      { title: '生成', desc: '预览与保存' },
+    ];
+    function wizardNext() { if (wizardStep.value < wizardSteps.length - 1) wizardStep.value++; }
+    function wizardPrev() { if (wizardStep.value > 0) wizardStep.value--; }
+    function wizardGoto(i) { wizardStep.value = i; }
 
     // ===== MCP =====
     async function searchMcpMarket() {
@@ -1457,8 +1515,9 @@ createApp({
       toggleSkill, toggleMcp, refreshPluginList, loadExistingPlugin, deleteExistingPlugin,
       newPlugin, previewPlugin, savePluginFile, installPluginFile,
       onTogglePlugin, installingPlugin, importing, importFromIde,
-      ideImport, ideImportStats, importedIdeMcp, importedIdeSkills,
-      importAllIdeMcp, importAllIdeSkills, applyImportedMcp, applyImportedSkills,
+      ideImport, ideImportStats, importedIdeMcp, importedIdeSkills, selectedLlm, wizardStep, wizardSteps,
+      importAllIdeMcp, importAllIdeSkills, applyImportedMcp, applyImportedSkills, applyImportedLlm,
+      toggleLlm, llmKey, wizardNext, wizardPrev, wizardGoto,
       searchMcpMarket, getMcpDetail, addMarketMcpToTemplate,
       toggleMcpDisabled, deleteMcpEntry, saveMcpTemplate, generateMcpRuntime,
       parsePastedMcp, addManualMcp, toggleAllMcp, saveMcpAll, syncMcpFull,

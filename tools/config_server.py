@@ -750,6 +750,7 @@ def save_plugin():
         "author": body.get("author", "MyAgentPlugin").strip() or "MyAgentPlugin",
         "mcpServers": body.get("mcpServers", {}),
         "skills": body.get("skills", []),
+        "llm": body.get("llm", []),
     }
     # 安全文件名
     safe_name = "".join(c for c in name if c.isalnum() or c in ("-", "_"))
