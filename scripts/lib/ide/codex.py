@@ -47,8 +47,9 @@ class CodexTarget(IdeTarget):
                        ".codex/auth.json", self.force)
 
     def init_skills(self, source_skills_dir: Path):
-        codex_skills_dir = self.root / ".codex" / "skills"
-        copy_skills_safe(source_skills_dir, codex_skills_dir, ".codex/skills/",
+        # 同步到全局目录（~/.codex/skills/）
+        codex_skills_dir = Path.home() / ".codex" / "skills"
+        copy_skills_safe(source_skills_dir, codex_skills_dir, "~/.codex/skills/",
                          self.force, self.include_skills)
         write_skills_index(source_skills_dir, codex_skills_dir / "README.md",
                            "Codex", self.force, self.include_skills)

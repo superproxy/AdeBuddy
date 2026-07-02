@@ -107,8 +107,9 @@ class WorkBuddyTarget(IdeTarget):
                                   self.force)
 
     def init_skills(self, source_skills_dir: Path):
-        wb_skills_dir = self.root / ".workbuddy" / "skills"
-        copy_skills_safe(source_skills_dir, wb_skills_dir, ".workbuddy/skills/",
+        # 同步到全局目录（~/.workbuddy/skills/）
+        wb_skills_dir = Path.home() / ".workbuddy" / "skills"
+        copy_skills_safe(source_skills_dir, wb_skills_dir, "~/.workbuddy/skills/",
                          self.force, self.include_skills)
         write_skills_index(source_skills_dir, wb_skills_dir / "README.md",
                            "WorkBuddy", self.force, self.include_skills)

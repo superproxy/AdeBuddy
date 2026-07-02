@@ -27,8 +27,9 @@ class OpenClawTarget(IdeTarget):
         copy_file_safe(source_mcp_file, oc_dir / "mcp.json", ".openclaw/mcp.json", self.force)
 
     def init_skills(self, source_skills_dir: Path):
-        oc_skills_dir = self.root / ".openclaw" / "skills"
-        copy_skills_safe(source_skills_dir, oc_skills_dir, ".openclaw/skills/",
+        # 同步到全局目录（~/.openclaw/skills/）
+        oc_skills_dir = Path.home() / ".openclaw" / "skills"
+        copy_skills_safe(source_skills_dir, oc_skills_dir, "~/.openclaw/skills/",
                          self.force, self.include_skills)
         write_skills_index(source_skills_dir, oc_skills_dir / "README.md",
                            "OpenClaw", self.force, self.include_skills)

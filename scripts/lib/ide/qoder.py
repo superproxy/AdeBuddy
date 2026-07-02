@@ -27,8 +27,9 @@ class QoderTarget(IdeTarget):
         copy_file_safe(source_mcp_file, qoder_dir / "mcp.json", ".qoder/mcp.json", self.force)
 
     def init_skills(self, source_skills_dir: Path):
-        qoder_skills_dir = self.root / ".qoder" / "skills"
-        copy_skills_safe(source_skills_dir, qoder_skills_dir, ".qoder/skills/",
+        # 同步到全局目录（~/.qoder/skills/）
+        qoder_skills_dir = Path.home() / ".qoder" / "skills"
+        copy_skills_safe(source_skills_dir, qoder_skills_dir, "~/.qoder/skills/",
                          self.force, self.include_skills)
         write_skills_index(source_skills_dir, qoder_skills_dir / "README.md",
                            "Qoder", self.force, self.include_skills)

@@ -93,8 +93,9 @@ class IdeATarget(IdeTarget):
             print(f"{COLOR_GREEN}[OK] Deployed acp.json to {copied} JetBrains IDE(s){COLOR_RESET}")
 
     def init_skills(self, source_skills_dir: Path):
-        idea_skills_dir = self.root / ".idea" / "skills"
-        copy_skills_safe(source_skills_dir, idea_skills_dir, ".idea/skills/",
+        # 同步到全局目录（~/.idea/skills/）
+        idea_skills_dir = Path.home() / ".idea" / "skills"
+        copy_skills_safe(source_skills_dir, idea_skills_dir, "~/.idea/skills/",
                          self.force, self.include_skills)
         write_skills_index(source_skills_dir, idea_skills_dir / "README.md",
                            "IDEA", self.force, self.include_skills)

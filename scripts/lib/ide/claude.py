@@ -133,8 +133,9 @@ class ClaudeTarget(IdeTarget):
                                       env_config, self.force)
 
     def init_skills(self, source_skills_dir: Path):
-        claude_skills_dir = self.root / ".claude" / "skills"
-        copy_skills_safe(source_skills_dir, claude_skills_dir, ".claude/skills/",
+        # 同步到全局目录（~/.claude/skills/）
+        claude_skills_dir = Path.home() / ".claude" / "skills"
+        copy_skills_safe(source_skills_dir, claude_skills_dir, "~/.claude/skills/",
                          self.force, self.include_skills)
         write_skills_index(source_skills_dir, claude_skills_dir / "README.md",
                            "Claude", self.force, self.include_skills)
