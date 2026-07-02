@@ -18,20 +18,20 @@ from .idea import IdeATarget
 from .agents import AgentsTarget
 
 
-# IDE 注册表：名称 → 类
+# IDE 注册表：名称 → 类（按字母顺序排列）
 IDE_REGISTRY = {
-    "Cursor": CursorTarget,
+    "Agents": AgentsTarget,
+    "Claude": ClaudeTarget,
     "Codex": CodexTarget,
+    "Cursor": CursorTarget,
+    "IDEA": IdeATarget,
+    "OpenClaw": OpenClawTarget,
     "OpenCode": OpenCodeTarget,
+    "Qoder": QoderTarget,
     "Trae": TraeTarget,
     "TraeCN": TraeCNTarget,
     "TraeSoloCN": TraeSoloCNTarget,
-    "Claude": ClaudeTarget,
     "WorkBuddy": WorkBuddyTarget,
-    "Qoder": QoderTarget,
-    "OpenClaw": OpenClawTarget,
-    "IDEA": IdeATarget,
-    "Agents": AgentsTarget,
 }
 
 

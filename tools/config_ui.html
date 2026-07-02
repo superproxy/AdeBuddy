@@ -702,18 +702,18 @@ createApp({
     const selectedInstalledSkills = reactive({});  // 已安装技能勾选状态，key=技能名
 
     const ideList = [
+      { key: 'Agents', label: 'Agents', desc: '通用 agents 配置' },
+      { key: 'Claude', label: 'Claude', desc: '.claude/settings.json + rules' },
+      { key: 'Codex', label: 'Codex', desc: '.codex/config.toml + rules' },
       { key: 'Cursor', label: 'Cursor', desc: '.cursor/rules + .cursor/mcp.json' },
+      { key: 'IDEA', label: 'IDEA', desc: 'IDEA 配置' },
+      { key: 'OpenClaw', label: 'OpenClaw', desc: '.openclaw/rules' },
+      { key: 'OpenCode', label: 'OpenCode', desc: 'opencode.json' },
+      { key: 'Qoder', label: 'Qoder', desc: '.qoder/rules' },
       { key: 'Trae', label: 'Trae', desc: '.trae/rules + .trae/mcp.json' },
       { key: 'trae-cn', label: 'Trae CN', desc: '.trae-cn/rules + mcp' },
       { key: 'trae-solo-cn', label: 'Trae Solo CN', desc: '.trae-solo-cn/rules' },
-      { key: 'Codex', label: 'Codex', desc: '.codex/config.toml + rules' },
-      { key: 'Claude', label: 'Claude', desc: '.claude/settings.json + rules' },
       { key: 'WorkBuddy', label: 'WorkBuddy', desc: '.workbuddy/rules + models.json' },
-      { key: 'Qoder', label: 'Qoder', desc: '.qoder/rules' },
-      { key: 'OpenClaw', label: 'OpenClaw', desc: '.openclaw/rules' },
-      { key: 'OpenCode', label: 'OpenCode', desc: 'opencode.json' },
-      { key: 'IDEA', label: 'IDEA', desc: 'IDEA 配置' },
-      { key: 'Agents', label: 'Agents', desc: '通用 agents 配置' },
     ];
     const ideLog = ref('');
     // 同步范围勾选（默认全部勾选）
