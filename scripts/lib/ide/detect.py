@@ -32,6 +32,10 @@ from pathlib import Path
 # ===== IDE 元数据注册表 =====
 # 每个 IDE 定义：
 #   cli_names：CLI 命令名列表（按优先级，shutil.which 探测）
+#   cli_tui_names：cli_names 中属于 TUI 交互式应用的成员（需 TTY 才能显示界面）。
+#       用于同一 IDE 混合 TUI/非TUI CLI 的场景（如 Trae：trae=桌面版CLI，trae-cli=TUI agent）。
+#       命中 cli 在此列表中 → is_tui=True；命中 cli 不在但列表非空 → is_tui=False；
+#       未定义或为空 → 回退 is_tui 字段。
 #   macos_apps：macOS .app 路径列表
 #   windows_apps：Windows GUI exe 路径列表（支持 {ProgramFiles} {ProgramFiles(x86)} {LOCALAPPDATA} {APPDATA} 占位）
 #   config_dirs：配置目录列表（相对 Path.home()）
@@ -75,6 +79,9 @@ IDE_DETECT_META = {
     "Trae": {
         "label": "Trae",
         "cli_names": ["trae", "trae-cli", "traecli"],
+        # trae 是桌面版 CLI（打开 GUI，非 TUI）；trae-cli/traecli 是 TUI code agent（需 TTY）
+        # 同一 IDE 混合了两种性质的 CLI，用 cli_tui_names 精确标记 TUI 成员
+        "cli_tui_names": ["trae-cli", "traecli"],
         "macos_apps": ["/Applications/Trae.app"],
         "windows_apps": [
             "{LOCALAPPDATA}/Programs/Trae/Trae.exe",
@@ -433,7 +440,7 @@ def _scan_registry_uninstall() -> list[dict]:
 
 
 def _scan_start_menu_shortcuts() -> dict[str, str]:
-    """扫描开始菜单 .lnk 快捷方式，返回 {name_stem: target_path}（带缓存）。
+    r"""扫描开始菜单 .lnk 快捷方式，返回 {name_stem: target_path}（带缓存）。
 
     覆盖 user 和 all-users 两个 Start Menu\Programs 目录。
     多线程环境下 pywin32 COM 需要每线程 CoInitialize（detect_all 用线程池）。
@@ -663,6 +670,7 @@ def detect_ide(ide_key: str) -> dict:
             "version": str,
             "config_paths": list[str],
             "sessions_dir": str,
+            "is_tui": bool,         # 命中的 CLI 是否为 TUI（需 TTY）；按 cli_tui_names 精确判定
         }
     """
     meta = IDE_DETECT_META.get(ide_key)
@@ -670,18 +678,20 @@ def detect_ide(ide_key: str) -> dict:
         return {
             "key": ide_key, "label": ide_key, "installed": False,
             "exe_path": "", "app_path": "", "version": "",
-            "config_paths": [], "sessions_dir": "",
+            "config_paths": [], "sessions_dir": "", "is_tui": False,
         }
 
     # 1. CLI 探测：shutil.which + .CMD/.BAT wrapper 解析
     exe_path = ""
     version = ""
+    hit_cli_name = ""
     for cli_name in meta.get("cli_names", []):
         p = _which(cli_name)
         if p:
             # Windows 下把 .CMD/.BAT 解析为真实 .exe（cursor.CMD → Cursor.exe）
             exe_path = _resolve_cmd_wrapper_to_exe(p)
             version = _get_cli_version(exe_path)
+            hit_cli_name = cli_name
             break
 
     # 2. App 探测：macOS .app + Windows GUI exe
@@ -709,6 +719,16 @@ def detect_ide(ide_key: str) -> dict:
     # 4. installed：必须有可执行文件（CLI 或 App），配置目录不算
     installed = bool(exe_path or app_path)
 
+    # 4.5 is_tui：按命中的 CLI 精确判定（同一 IDE 可能混合 TUI/非TUI CLI，
+    #     如 Trae 的 `trae` 是桌面版 CLI 而 `trae-cli`/`traecli` 是 TUI agent）。
+    #     - 命中 cli 且 cli_tui_names 非空：按命中 cli 是否在列表中判定
+    #     - 否则：回退 meta 的 is_tui 默认值
+    tui_cli_names = set(meta.get("cli_tui_names", []))
+    if hit_cli_name and tui_cli_names:
+        is_tui = hit_cli_name in tui_cli_names
+    else:
+        is_tui = bool(meta.get("is_tui", False))
+
     # 5. 版本号：优先 CLI 版本，其次注册表 DisplayVersion
     if not version and app_version:
         version = app_version
@@ -722,6 +742,7 @@ def detect_ide(ide_key: str) -> dict:
         "version": version,
         "config_paths": config_paths,
         "sessions_dir": sessions_dir,
+        "is_tui": is_tui,
     }
 
 

@@ -1174,8 +1174,8 @@ createApp({
       { key: 'Qoder', label: 'Qoder', desc: '.qoder/rules' },
       { key: 'QoderCN', label: 'Qoder CN', desc: '.qoder-cn/rules' },
       { key: 'Trae', label: 'Trae', desc: '.trae/rules + .trae/mcp.json' },
-      { key: 'trae-cn', label: 'Trae CN', desc: '.trae-cn/rules + mcp' },
-      { key: 'trae-solo-cn', label: 'Trae Work CN', desc: '.trae-solo-cn/rules' },
+      { key: 'TraeCN', label: 'Trae CN', desc: '.trae-cn/rules + mcp' },
+      { key: 'TraeSoloCN', label: 'Trae Work CN', desc: '.trae-solo-cn/rules' },
       { key: 'WorkBuddy', label: 'WorkBuddy', desc: '.workbuddy/rules + models.json' },
       { key: 'ZCode', label: 'ZCode', desc: '.zcode/zcode.json' },
     ]);
@@ -2013,10 +2013,29 @@ createApp({
         if (!r.ok) { toast('IDE 检测失败: ' + (r.error || ''), 'err'); return; }
         ideDetects.value = r.ides || [];
         ideDetectStats.value = r.stats || {};
+        // 未安装的 IDE 沉到顶部“同步到”列表底部（已安装在前，组内保持拖拽顺序）
+        sinkNotInstalledIdes();
         toast(`检测完成: ${ideDetectStats.value.installed}/${ideDetectStats.value.total} 已安装`, 'ok');
         // 并行加载安装元信息
         loadIdeInstallInfo();
       } finally { ideDetecting.value = false; }
+    }
+
+    // 按 installed 状态对 ideList 做 stable 分区：已安装在前，未安装在后。
+    // 组内保持用户拖拽的相对顺序；仅当顺序变化时才写 localStorage。
+    // 依赖 ideList.key 与 ideDetects.key 一致（已统一为后端 IDE_REGISTRY 的驼峰 key）。
+    function sinkNotInstalledIdes() {
+      if (!ideDetects.value.length) return;
+      const installedSet = new Set(ideDetects.value.filter(i => i.installed).map(i => i.key));
+      const installed = ideList.value.filter(i => installedSet.has(i.key));
+      const notInstalled = ideList.value.filter(i => !installedSet.has(i.key));
+      if (installed.length + notInstalled.length !== ideList.value.length) return;
+      const newOrder = [...installed, ...notInstalled];
+      const changed = newOrder.some((ide, idx) => ide.key !== ideList.value[idx].key);
+      if (changed) {
+        ideList.value = newOrder;
+        saveIdeOrder();
+      }
     }
 
     async function loadIdeSessions(ideKey) {
@@ -2299,6 +2318,8 @@ createApp({
       if (ideR.ok) {
         ideDetects.value = ideR.ides || [];
         ideDetectStats.value = ideR.stats || {};
+        // 未安装的 IDE 沉到列表底部（与 loadIdeDetect 保持一致）
+        sinkNotInstalledIdes();
       }
       // 并行加载 IDE 安装元信息（触发 ideInstallInfoLoaded）
       loadIdeInstallInfo();

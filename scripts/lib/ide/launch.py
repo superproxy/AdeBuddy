@@ -198,7 +198,9 @@ def launch_ide(ide_key: str, cwd: str = "", session_id: str = "") -> dict:
     exe_path = info.get("exe_path", "")
     app_path = info.get("app_path", "")
     meta = IDE_DETECT_META.get(ide_key, {})
-    is_tui = meta.get("is_tui", False)
+    # is_tui 优先用 detect 返回的 per-cli 判定（同一 IDE 可能混合 TUI/非TUI CLI，
+    # 如 Trae 命中 trae-cli 时为 TUI，命中 trae 时为非 TUI），回退 meta 默认值
+    is_tui = info.get("is_tui", meta.get("is_tui", False))
 
     # 优先 CLI（支持 resume）
     if exe_path:
