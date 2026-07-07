@@ -167,6 +167,27 @@ def cmd_sync(args):
     mcp_yaml_file = PROJECT_ROOT / "config" / "mcp" / "mcp.yaml"
     plugins_dir = PROJECT_ROOT / "template" / "plugins"
 
+    # 首次运行时从模板生成 mcp.yaml / llm.yaml（与 config_server._ensure_* 一致）
+    mcp_example = PROJECT_ROOT / "template" / "mcp" / "mcp-env-example.yaml"
+    if not mcp_yaml_file.exists() and mcp_example.exists():
+        mcp_yaml_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            import shutil
+            shutil.copy2(mcp_example, mcp_yaml_file)
+            hint(f"首次运行：已从模板生成 {mcp_yaml_file.relative_to(PROJECT_ROOT)}")
+        except Exception as e:
+            hint(f"[WARN] 创建 mcp.yaml 失败: {e}")
+    llm_yaml_file = PROJECT_ROOT / "config" / "llm" / "llm.yaml"
+    llm_example = PROJECT_ROOT / "template" / "llm" / "llm-env-example.yaml"
+    if not llm_yaml_file.exists() and llm_example.exists():
+        llm_yaml_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            import shutil
+            shutil.copy2(llm_example, llm_yaml_file)
+            hint(f"首次运行：已从模板生成 {llm_yaml_file.relative_to(PROJECT_ROOT)}")
+        except Exception as e:
+            hint(f"[WARN] 创建 llm.yaml 失败: {e}")
+
     # sync 前自动刷新 mcp.json：合并 mcp.yaml + 已安装插件 mcpServers
     # 这样 sync 就是完整的「关联 mcp + skill → 全局 → IDE」流程
     if "mcp" in scope and mcp_yaml_file.exists():
