@@ -31,6 +31,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 SPEC_FILE = PROJECT_ROOT / "app.spec"
 DIST_DIR = PROJECT_ROOT / "dist"
 BUILD_DIR = PROJECT_ROOT / "build"
+INSTALLER_ISS = PROJECT_ROOT / "installer.iss"
+INSTALLER_OUT_DIR = DIST_DIR / "installer"
 
 # 绝不允许出现在产物中的文件名（ basename 匹配）
 # 这些是运行态文件（含真实 API Key），由脚本从 *.template.* 生成
@@ -154,7 +156,11 @@ def report() -> None:
         exe = DIST_DIR / "AgentBuddy" / "AgentBuddy.exe"
         print(f"  产物目录: dist\\AgentBuddy\\")
         print(f"  可执行:  {exe.relative_to(PROJECT_ROOT)}")
-        print("  分发:    压缩 dist\\AgentBuddy 为 .zip，或用 Inno Setup 做 .exe 安装包")
+        installer = list(INSTALLER_OUT_DIR.glob("AgentBuddy-Setup-*.exe")) if INSTALLER_OUT_DIR.exists() else []
+        if installer:
+            print(f"  安装包:  {installer[0].relative_to(PROJECT_ROOT)}")
+        else:
+            print("  分发:    压缩 dist\\AgentBuddy 为 .zip，或用 Inno Setup 做 .exe 安装包")
     else:
         exe = DIST_DIR / "AgentBuddy" / "AgentBuddy"
         print(f"  产物目录: dist/AgentBuddy/")
@@ -164,11 +170,56 @@ def report() -> None:
     print("  用户在 UI 中填入真实 API Key 即可。\n")
 
 
+def find_iscc() -> str | None:
+    """查找 Inno Setup 编译器 ISCC.exe。返回路径或 None。"""
+    # 1) PATH
+    from shutil import which
+    p = which("ISCC") or which("ISCC.exe")
+    if p:
+        return p
+    # 2) 默认安装路径
+    candidates = [
+        r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        r"C:\Program Files\Inno Setup 6\ISCC.exe",
+        r"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe",
+    ]
+    import os
+    for c in candidates:
+        expanded = os.path.expandvars(c)
+        if Path(expanded).is_file():
+            return expanded
+    return None
+
+
+def build_installer(version: str = "1.0.0") -> None:
+    """调用 Inno Setup 编译 installer.iss 生成 .exe 安装包。"""
+    if not INSTALLER_ISS.is_file():
+        fail(f"找不到 {INSTALLER_ISS.name}")
+    iscc = find_iscc()
+    if not iscc:
+        info("未找到 Inno Setup (ISCC.exe)，跳过安装包生成")
+        info("  安装 Inno Setup 6: https://jrsoftware.org/isdl.php")
+        return
+    INSTALLER_OUT_DIR.mkdir(parents=True, exist_ok=True)
+    cmd = [iscc, f"/DAPP_VERSION={version}", str(INSTALLER_ISS)]
+    info(f"执行: {' '.join(cmd)}")
+    rc = subprocess.call(cmd, cwd=str(PROJECT_ROOT))
+    if rc != 0:
+        fail(f"Inno Setup 编译失败 (exit={rc})")
+    installer = INSTALLER_OUT_DIR / f"AgentBuddy-Setup-{version}-x64.exe"
+    if installer.is_file():
+        info(f"安装包已生成: {installer.relative_to(PROJECT_ROOT)}")
+    else:
+        fail(f"未找到预期的安装包输出: {installer.name}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="AgentBuddy 跨平台打包")
     ap.add_argument("--windowed", action="store_true", help="无控制台（macOS 生成 .app / Windows 无黑框）")
     ap.add_argument("--clean", action="store_true", help="构建前清理 dist/ build/")
     ap.add_argument("--no-verify", action="store_true", help="跳过密钥泄漏扫描（不推荐）")
+    ap.add_argument("--no-installer", action="store_true", help="跳过 Inno Setup 安装包生成（仅 Windows）")
+    ap.add_argument("--version", default="1.0.0", help="安装包版本号（默认 1.0.0）")
     args = ap.parse_args()
 
     info(f"平台: {sys.platform} | Python: {sys.version.split()[0]}")
@@ -179,6 +230,8 @@ def main():
     if not args.no_verify:
         verify_bundle()
         check_examples_present()
+    if sys.platform == "win32" and not args.no_installer:
+        build_installer(version=args.version)
     report()
 
 

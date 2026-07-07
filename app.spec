@@ -57,7 +57,6 @@ datas = []
 datas += collect_dir('scripts', 'scripts')
 datas += collect_dir('tools', 'tools')
 datas += collect_dir('template', 'template')
-datas += collect_dir('agents', 'agents')
 
 # 单文件资源
 for f in ('AGENTS.md', 'README.md', 'install.sh', 'install.cmd',
