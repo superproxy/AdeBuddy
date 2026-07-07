@@ -2,9 +2,12 @@
 import { onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useSkillStore } from '../stores/skill'
+import { useUiStore } from '../stores/ui'
 const skill = useSkillStore()
+const ui = useUiStore()
 const { skillTab, skillSources, skillSearchQ, skillSearchResults, skillSearchHint, skillSearched, manualSkillInput, installedSkills, enabledInstalledCount } = storeToRefs(skill)
 const { searchSkills, installFromSearch, installManualSkill, loadLocalSkills, loadInstalledSkills, viewSkillMd, uninstallSkill, syncToIde, onToggleSkill, toggleAllInstalled } = skill
+async function refreshInstalled() { await loadInstalledSkills(); ui.toast('已刷新本地技能列表') }
 onMounted(() => { loadLocalSkills(); loadInstalledSkills() })
 </script>
 <template>
@@ -57,6 +60,7 @@ onMounted(() => { loadLocalSkills(); loadInstalledSkills() })
       <div class="flex justify-between items-center mb-3 pb-3 border-b border-gray-100">
         <h2 class="text-sm font-semibold">本地可用技能 ({{ installedSkills.length }} · 已启用 {{ enabledInstalledCount }})</h2>
         <div class="flex gap-2">
+          <button @click="refreshInstalled" class="px-2 py-1.5 text-[11px] bg-ink-100 rounded hover:bg-ink-300">刷新</button>
           <button @click="toggleAllInstalled(true)" class="px-2 py-1.5 text-[11px] bg-ink-100 rounded hover:bg-ink-300">全选</button>
           <button @click="toggleAllInstalled(false)" class="px-2 py-1.5 text-[11px] bg-ink-100 rounded hover:bg-ink-300">全不选</button>
           <button @click="syncToIde" class="px-2 py-1.5 text-[11px] bg-brand-50 text-brand-600 rounded hover:bg-brand-100">同步到 IDE</button>
