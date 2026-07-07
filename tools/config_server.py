@@ -1533,6 +1533,39 @@ def api_ide_launch():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/ide/open-config", methods=["POST"])
+def api_ide_open_config():
+    """打开 IDE 的全局配置目录（用系统文件管理器）。
+
+    Body: {ide: <IDE key>}
+    Returns: {ok, ide, path, error}
+    """
+    body = request.get_json(silent=True) or {}
+    ide_key = (body.get("ide") or "").strip()
+    if not ide_key:
+        return jsonify({"ok": False, "error": "missing ide"}), 400
+    try:
+        info = detect_ide(ide_key)
+        config_paths = info.get("config_paths") or []
+        if not config_paths:
+            return jsonify({"ok": False, "ide": ide_key, "path": "",
+                            "error": f"IDE {ide_key} 无配置目录"}), 404
+        target = config_paths[0]
+        import subprocess, sys, os
+        if sys.platform == "win32":
+            # explorer.exe 直接打开目录；CREATE_NO_WINDOW 避免黑窗
+            subprocess.Popen(["explorer.exe", target],
+                             creationflags=0x08000000)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", target])
+        else:
+            subprocess.Popen(["xdg-open", target])
+        return jsonify({"ok": True, "ide": ide_key, "path": target, "error": ""})
+    except Exception as e:
+        return jsonify({"ok": False, "ide": ide_key, "path": "",
+                        "error": str(e)}), 500
+
+
 @app.route("/api/ide/install", methods=["POST"])
 def api_ide_install():
     """安装 IDE（CLI 或 App）。

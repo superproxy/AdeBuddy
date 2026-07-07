@@ -51,18 +51,71 @@ def _launch_cli(exe_path: str, args: list[str], cwd: str = "", env: dict | None 
         return {"ok": False, "pid": 0, "cmd": " ".join(cmd), "error": str(e)}
 
 
-def _launch_cli_in_terminal(exe_path: str, args: list[str], cwd: str = "",
-                            env: dict | None = None, title: str = "") -> dict:
-    """在 macOS Terminal.app 中启动 TUI CLI（非阻塞，有 TTY）。
+def _launch_cli_in_new_console_win32(exe_path: str, args: list[str], cwd: str = "",
+                                     env: dict | None = None, title: str = "") -> dict:
+    """在新的 Windows 控制台窗口中启动 TUI CLI（非阻塞，有 TTY）。
 
-    用于 Claude/Codex/OpenCode 等 TUI 应用 —— 这些 CLI 需要 TTY 才能渲染界面，
-    直接 Popen + DEVNULL 会导致进程虽启动但用户看不到界面，反复点击堆积僵尸进程。
+    用 CREATE_NEW_CONSOLE 标志让 Popen 开新 cmd 窗口；Windows 11 默认终端为
+    Windows Terminal，会自动接管新控制台。窗口关闭即终止子进程。
+
+    Args:
+        title: 窗口标题（Windows 控制台标题，会被 cmd /K TITLE 设置）
 
     Returns:
         {ok: bool, pid: int, cmd: str, error: str}
     """
+    if not exe_path:
+        return {"ok": False, "pid": 0, "cmd": "", "error": "exe_path is empty"}
+
+    # 构造在窗口内执行的 shell 命令：cd /d <cwd> && <exe> <args>
+    # 路径含空格用双引号包裹；args 之间空格分隔（build_resume_command 已拆好）
+    quote = lambda s: f'"{s}"' if " " in s and not s.startswith('"') else s
+    inner_parts = [quote(exe_path)] + [quote(a) for a in args]
+    inner_cmd = " ".join(inner_parts)
+    if cwd:
+        inner_cmd = f'cd /d "{cwd}" && {inner_cmd}'
+
+    # 用 cmd /K 让窗口保持打开（关窗即退进程）；TITLE 设置窗口标题
+    safe_title = (title or "TUI CLI").replace('"', '')
+    full_cmd = f'TITLE {safe_title} && {inner_cmd}'
+    cmd = ["cmd.exe", "/K", full_cmd]
+
+    try:
+        # CREATE_NEW_CONSOLE = 0x00000010：新建控制台窗口（有 TTY）
+        # 不用 start_new_session，否则关窗不会终止子进程
+        proc = subprocess.Popen(
+            cmd,
+            cwd=cwd or None,
+            env={**os.environ, **(env or {})},
+            creationflags=0x00000010,
+        )
+        return {
+            "ok": True, "pid": proc.pid,
+            "cmd": f"{exe_path} {' '.join(args)}".strip(),
+            "error": "", "_new_console": True,
+        }
+    except Exception as e:
+        return {"ok": False, "pid": 0, "cmd": " ".join(cmd), "error": str(e)}
+
+
+def _launch_cli_in_terminal(exe_path: str, args: list[str], cwd: str = "",
+                            env: dict | None = None, title: str = "") -> dict:
+    """在终端窗口中启动 TUI CLI（非阻塞，有 TTY）。
+
+    用于 Claude/Codex/OpenCode 等 TUI 应用 —— 这些 CLI 需要 TTY 才能渲染界面，
+    直接 Popen + DEVNULL 会导致进程虽启动但用户看不到界面，反复点击堆积僵尸进程。
+
+    - macOS：用 Terminal.app（osascript do script）打开新窗口
+    - Windows：用 CREATE_NEW_CONSOLE 新建 cmd 窗口（Windows 11 默认即 Windows Terminal）
+    - 其他平台：回退到普通 Popen
+
+    Returns:
+        {ok: bool, pid: int, cmd: str, error: str}
+    """
+    if sys.platform == "win32":
+        return _launch_cli_in_new_console_win32(exe_path, args, cwd, env, title)
     if sys.platform != "darwin":
-        # 非 macOS 回退到普通 Popen
+        # 非 macOS/Linux 回退到普通 Popen
         return _launch_cli(exe_path, args, cwd, env)
     if not exe_path:
         return {"ok": False, "pid": 0, "cmd": "", "error": "exe_path is empty"}
