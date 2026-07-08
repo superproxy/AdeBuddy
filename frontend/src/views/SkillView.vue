@@ -5,9 +5,9 @@ import { useSkillStore } from '../stores/skill'
 import { useUiStore } from '../stores/ui'
 const skill = useSkillStore()
 const ui = useUiStore()
-const { skillTab, skillSources, skillSearchQ, skillSearchResults, skillSearchHint, skillSearched, manualSkillInput, installedSkills, enabledInstalledCount } = storeToRefs(skill)
+const { skillTab, skillSources, skillSearchQ, skillSearchResults, skillSearchHint, skillSearched, manualSkillInput, installedSkills, enabledInstalledCount, localSkills } = storeToRefs(skill)
 const { searchSkills, installFromSearch, installManualSkill, loadLocalSkills, loadInstalledSkills, viewSkillMd, uninstallSkill, syncToIde, onToggleSkill, toggleAllInstalled } = skill
-async function refreshInstalled() { await loadInstalledSkills(); ui.toast('已刷新本地技能列表') }
+async function refreshInstalled() { await loadLocalSkills(); await loadInstalledSkills(); ui.toast('已刷新技能列表') }
 onMounted(() => { loadLocalSkills(); loadInstalledSkills() })
 </script>
 <template>
@@ -56,9 +56,34 @@ onMounted(() => { loadLocalSkills(); loadInstalledSkills() })
         <p class="text-[11px] text-ink-500 mt-2">支持 vercel-labs/skills、vercel-labs/skills@find-skills、https://github.com/owner/repo</p>
       </div>
     </div>
+    <!-- 本地预置技能（template/skills）-->
     <div class="bg-white rounded-xl shadow-card p-5">
       <div class="flex justify-between items-center mb-3 pb-3 border-b border-gray-100">
-        <h2 class="text-sm font-semibold">本地可用技能 ({{ installedSkills.length }} · 已启用 {{ enabledInstalledCount }})</h2>
+        <h2 class="text-sm font-semibold flex items-center gap-2">
+          <span class="w-1 h-4 bg-brand-500 rounded"></span>本地预置技能
+          <span class="text-[10px] text-ink-500 font-normal">{{ localSkills.length }} 个</span>
+        </h2>
+        <button @click="refreshInstalled" class="px-2 py-1.5 text-[11px] bg-ink-100 rounded hover:bg-ink-300">刷新</button>
+      </div>
+      <div class="grid grid-cols-2 gap-2 max-h-[400px] overflow-y-auto">
+        <div v-for="s in localSkills" :key="s.skill_name" class="border border-ink-300 rounded-md p-2 hover:border-brand-500 transition">
+          <div class="flex items-center justify-between mb-0.5">
+            <span class="font-medium text-xs truncate">{{ s.skill_name }}</span>
+            <button @click="viewSkillMd(s.skill_name)" class="text-[10px] text-brand-600 hover:underline shrink-0">查看</button>
+          </div>
+          <div class="text-[10px] text-ink-500 line-clamp-2">{{ s.description }}</div>
+          <div class="flex items-center gap-1 mt-1">
+            <span v-if="s.category" class="text-[9px] px-1 py-0.5 bg-brand-50 text-brand-600 rounded">{{ s.category }}</span>
+            <button @click="installFromSearch({ source: 'local', name: s.skill_name, description: s.description, install_command: 'npx skills add ' + s.skill_name + ' --copy -y' })" class="text-[10px] text-green-600 hover:underline ml-auto">安装</button>
+          </div>
+        </div>
+      </div>
+      <div v-if="!localSkills.length" class="text-center text-ink-500 text-xs py-6">暂无本地预置技能</div>
+    </div>
+    <!-- 已安装技能 -->
+    <div class="bg-white rounded-xl shadow-card p-5">
+      <div class="flex justify-between items-center mb-3 pb-3 border-b border-gray-100">
+        <h2 class="text-sm font-semibold">已安装技能 ({{ installedSkills.length }} · 已启用 {{ enabledInstalledCount }})</h2>
         <div class="flex gap-2">
           <button @click="refreshInstalled" class="px-2 py-1.5 text-[11px] bg-ink-100 rounded hover:bg-ink-300">刷新</button>
           <button @click="toggleAllInstalled(true)" class="px-2 py-1.5 text-[11px] bg-ink-100 rounded hover:bg-ink-300">全选</button>
