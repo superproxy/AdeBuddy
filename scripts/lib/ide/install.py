@@ -45,7 +45,7 @@ IDE_INSTALL_META = {
         "homepage": "https://cursor.com",
     },
     "Trae": {
-        "cli_install": {"method": "manual", "url": "https://www.trae.ai"},
+        "cli_install": {"method": "manual", "url": "https://www.trae.ai", "uninstall_cmd": "rm -f ~/.local/bin/trae-cli ~/.local/bin/traecli && rm -rf ~/.local/share/trae-cli"},
         "app_install": {"method": "cask", "package": "trae"},
         "homepage": "https://www.trae.ai",
     },
@@ -60,7 +60,7 @@ IDE_INSTALL_META = {
         "homepage": "https://www.trae.cn",
     },
     "OpenCode": {
-        "cli_install": {"method": "brew", "package": "opencode"},
+        "cli_install": {"method": "brew", "package": "opencode", "uninstall_cmd": "rm -f $(which opencode) 2>/dev/null; rm -rf ~/.config/opencode"},
         "app_install": {"method": "manual", "url": "https://opencode.ai"},
         "homepage": "https://opencode.ai",
     },
@@ -75,7 +75,7 @@ IDE_INSTALL_META = {
         "homepage": "https://qoder.com.cn/cli",
     },
     "OpenClaw": {
-        "cli_install": {"method": "manual", "url": "https://github.com/openclaw/openclaw"},
+        "cli_install": {"method": "manual", "url": "https://github.com/openclaw/openclaw", "uninstall_cmd": "rm -f ~/.local/bin/openclaw && rm -rf ~/.local/share/openclaw"},
         "app_install": {"method": "cask", "package": "openclaw"},
         "homepage": "https://github.com/openclaw/openclaw",
     },
@@ -313,6 +313,15 @@ def uninstall_ide(ide_key: str, mode: str = "cli") -> dict:
     package = install_meta.get("package", "")
 
     if method == "manual":
+        # manual 但配了 uninstall_cmd：执行自定义卸载命令（如 trae-cli 删符号链接+目录）
+        uninstall_cmd = install_meta.get("uninstall_cmd", "")
+        if uninstall_cmd:
+            r = _run_cmd(["bash", "-c", uninstall_cmd], timeout=120)
+            return {
+                "ok": r["ok"], "ide": ide_key, "mode": mode, "method": "manual",
+                "message": "卸载成功" if r["ok"] else f"卸载失败 (exit={r['returncode']})",
+                "cmd": uninstall_cmd, "stdout": r["stdout"][-2000:], "stderr": r["stderr"][-2000:],
+            }
         return {
             "ok": False, "ide": ide_key, "mode": mode, "method": "manual",
             "message": "需手动卸载", "cmd": "", "stdout": "", "stderr": "",
@@ -328,16 +337,25 @@ def uninstall_ide(ide_key: str, mode: str = "cli") -> dict:
         }
 
     if method == "brew":
-        if not shutil.which("brew"):
-            return {"ok": False, "ide": ide_key, "mode": mode, "method": "brew",
-                    "message": "未安装 Homebrew", "cmd": "", "stdout": "", "stderr": ""}
-        cmd = ["brew", "uninstall", package]
-        r = _run_cmd(cmd, timeout=300)
-        return {
-            "ok": r["ok"], "ide": ide_key, "mode": mode, "method": "brew",
-            "message": "卸载成功" if r["ok"] else f"卸载失败 (exit={r['returncode']})",
-            "cmd": r["cmd"], "stdout": r["stdout"][-2000:], "stderr": r["stderr"][-2000:],
-        }
+        if shutil.which("brew"):
+            r = _run_cmd(["brew", "uninstall", package], timeout=300)
+            if r["ok"]:
+                return {
+                    "ok": True, "ide": ide_key, "mode": mode, "method": "brew",
+                    "message": "卸载成功", "cmd": r["cmd"],
+                    "stdout": r["stdout"][-2000:], "stderr": r["stderr"][-2000:],
+                }
+        # brew 失败或无 brew，fallback uninstall_cmd
+        uninstall_cmd = install_meta.get("uninstall_cmd", "")
+        if uninstall_cmd:
+            r = _run_cmd(["bash", "-c", uninstall_cmd], timeout=120)
+            return {
+                "ok": r["ok"], "ide": ide_key, "mode": mode, "method": "brew",
+                "message": "卸载成功" if r["ok"] else f"卸载失败 (exit={r['returncode']})",
+                "cmd": uninstall_cmd, "stdout": r["stdout"][-2000:], "stderr": r["stderr"][-2000:],
+            }
+        return {"ok": False, "ide": ide_key, "mode": mode, "method": "brew",
+                "message": "未安装 Homebrew 或 brew uninstall 失败", "cmd": "", "stdout": "", "stderr": ""}
 
     if method == "cask":
         if not shutil.which("brew"):
