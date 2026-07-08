@@ -76,6 +76,8 @@ export const useIdeStore = defineStore('ide', () => {
   // ===== computed =====
   const installedIdes = computed(() => ideDetects.value.filter((i) => i.installed))
   const notInstalledIdes = computed(() => ideDetects.value.filter((i) => !i.installed))
+  /** 有会话目录的已安装 IDE（用于右侧会话面板的 IDE 选择器） */
+  const sessionableIdes = computed(() => ideDetects.value.filter((i) => i.installed && i.sessions_dir))
   const shareTargetIdes = computed(() => {
     const source = shareModalSession.value?._source_ide
     return ideDetects.value.filter((i) => i.installed && i.sessions_dir && i.key !== source)
@@ -426,6 +428,7 @@ export const useIdeStore = defineStore('ide', () => {
     // computed
     installedIdes,
     notInstalledIdes,
+    sessionableIdes,
     shareTargetIdes,
     // 函数
     loadIdeDetect,
