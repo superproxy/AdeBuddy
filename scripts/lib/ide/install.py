@@ -30,7 +30,7 @@ IDE_INSTALL_META = {
     },
     "Codex": {
         "cli_install": {"method": "npm", "package": "@openai/codex"},
-        "app_install": {"method": "manual", "url": "https://openai.com/codex"},
+        "app_install": {"method": "manual", "url": "https://openai.com/codex/download"},
         "homepage": "https://openai.com/codex",
     },
     "Cursor": {
@@ -61,7 +61,7 @@ IDE_INSTALL_META = {
     },
     "OpenCode": {
         "cli_install": {"method": "brew", "package": "opencode", "uninstall_cmd": "rm -f $(which opencode) 2>/dev/null; rm -rf ~/.config/opencode"},
-        "app_install": {"method": "manual", "url": "https://opencode.ai"},
+        "app_install": {"method": "manual", "url": "https://opencode.ai/downloads"},
         "homepage": "https://opencode.ai",
     },
     "Qoder": {
@@ -86,12 +86,12 @@ IDE_INSTALL_META = {
     },
     "WorkBuddy": {
         "cli_install": {"method": "npm", "package": "@anthropic-ai/claude-code"},
-        "app_install": {"method": "manual", "url": "https://github.com/workbuddy/workbuddy"},
+        "app_install": {"method": "manual", "url": "https://github.com/workbuddy/workbuddy/releases"},
         "homepage": "https://github.com/workbuddy/workbuddy",
     },
     "ZCode": {
         "cli_install": {"method": "manual", "url": "https://zcode.z.ai/cn"},
-        "app_install": {"method": "manual", "url": "https://zcode.z.ai/cn"},
+        "app_install": {"method": "manual", "url": "https://zcode.z.ai/cn/download"},
         "homepage": "https://zcode.z.ai/cn",
     },
     "IDEA": {
