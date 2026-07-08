@@ -8,7 +8,7 @@ defineProps<{ label?: string }>()
       {{ label || '该模块' }}正在迁移到 Vue 3 + Vite
     </div>
     <div class="text-ink-400 text-xs mb-4">
-      第一阶段已迁移「IDE 管理」tab，其他 tab 陆续迁移中
+      第一阶段已迁移「AIDE 管理」tab，其他 tab 陆续迁移中
     </div>
     <a
       href="/old"

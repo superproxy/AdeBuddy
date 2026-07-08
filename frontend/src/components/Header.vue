@@ -18,7 +18,7 @@ const emit = defineEmits<{ (e: 'update:tab', v: string): void }>()
         </div>
         <div>
           <h1 class="text-base font-semibold">AgentBuddy 配置工具</h1>
-          <div class="text-xs text-white/60">Vue 3 + Vite 重构中 · IDE 管理 tab 已迁移</div>
+          <div class="text-xs text-white/60">Vue 3 + Vite 重构中 · AIDE 管理 tab 已迁移</div>
         </div>
       </div>
       <div class="flex items-center gap-2">

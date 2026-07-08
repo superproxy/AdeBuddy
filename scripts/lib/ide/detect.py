@@ -601,17 +601,17 @@ def _lookup_version_from_registry(label: str) -> str:
 def _get_cli_version(exe_path: str) -> str:
     """尝试获取 CLI 版本（--version），失败返回空字符串。
 
-    Windows 下用 CREATE_NO_WINDOW 避免每个 CLI 探测弹一个 cmd 黑窗。
+    Windows 下跳过版本获取：某些 IDE 的 CLI（如 cursor.CMD → Cursor.exe）
+    调 --version 会启动 GUI 窗口，detect_all 并行检测 14 个 IDE 会弹很多窗口。
+    macOS/Linux 正常获取。
     """
     if not exe_path:
         return ""
-    # 只试 --version（绝大多数 CLI 支持），失败快速返回，避免逐个 flag 串行拖慢
-    kwargs = dict(capture_output=True, text=True, timeout=2)
+    # Windows 跳过：避免 GUI exe（Cursor.exe/Trae.exe 等）--version 启动窗口
     if sys.platform == "win32":
-        # 隐藏 cmd 窗口（subprocess.CREATE_NO_WINDOW = 0x08000000）
-        kwargs["creationflags"] = 0x08000000
+        return ""
     try:
-        r = subprocess.run([exe_path, "--version"], **kwargs)
+        r = subprocess.run([exe_path, "--version"], capture_output=True, text=True, timeout=2)
         out = (r.stdout + r.stderr).strip()
         if out:
             return out.split("\n", 1)[0][:80]

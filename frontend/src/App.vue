@@ -18,7 +18,7 @@ import { useMcpStore } from './stores/mcp'
 
 const tab = ref('ide')
 const tabs = [
-  { key: 'ide', label: 'IDE 管理' },
+  { key: 'ide', label: 'AIDE 管理' },
   { key: 'env', label: 'LLM 配置' },
   { key: 'mcp', label: 'MCP 配置' },
   { key: 'skill', label: 'Skills 配置' },

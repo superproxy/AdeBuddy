@@ -25,7 +25,7 @@ const {
     <div class="bg-white rounded-xl shadow-card p-4">
       <div class="flex items-center justify-between mb-3">
         <h2 class="text-sm font-semibold flex items-center gap-2">
-          <span class="w-1 h-4 bg-brand-500 rounded"></span>IDE 检测与会话管理
+          <span class="w-1 h-4 bg-brand-500 rounded"></span>AIDE 检测与会话管理
         </h2>
         <button @click="loadIdeDetect" :disabled="ideDetecting"
           class="px-3 py-1.5 text-xs bg-brand-50 text-brand-600 rounded-md hover:bg-brand-100 font-medium disabled:opacity-40">
