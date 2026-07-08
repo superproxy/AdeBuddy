@@ -103,9 +103,9 @@ def write_version(version: str) -> None:
 
 
 def run_pyinstaller(windowed: bool) -> None:
+    # 使用 .spec 文件时，windowed 由 spec 内的 console=False 控制，
+    # 不能再传 --windowed（PyInstaller 不允许 spec + --windowed 同时使用）
     cmd = [sys.executable, "-m", "PyInstaller", str(SPEC_FILE), "--noconfirm"]
-    if windowed:
-        cmd.append("--windowed")
     info(f"执行: {' '.join(cmd)}")
     rc = subprocess.call(cmd, cwd=str(PROJECT_ROOT))
     if rc != 0:
