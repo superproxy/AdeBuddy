@@ -75,7 +75,7 @@ IDE_INSTALL_META = {
         "homepage": "https://qoder.com.cn/cli",
     },
     "OpenClaw": {
-        "cli_install": {"method": "npm", "package": "@anthropic-ai/claude-code", "uninstall_cmd": "rm -f ~/.local/bin/openclaw && rm -rf ~/.local/share/openclaw"},
+        "cli_install": {"method": "npm", "package": "openclaw", "uninstall_cmd": "npm uninstall -g openclaw 2>/dev/null; rm -f $(which openclaw) 2>/dev/null; rm -rf ~/.local/share/openclaw"},
         "app_install": {"method": "cask", "package": "openclaw"},
         "homepage": "https://github.com/openclaw/openclaw",
     },
@@ -375,6 +375,32 @@ def uninstall_ide(ide_key: str, mode: str = "cli") -> dict:
                     "message": "未安装 npm", "cmd": "", "stdout": "", "stderr": ""}
         cmd = ["npm", "uninstall", "-g", package]
         r = _run_cmd(cmd, timeout=300)
+        if r["ok"]:
+            # npm uninstall 返回成功，但可能没真正删掉（多 npm 环境如 nvm vs homebrew）
+            # 检查二进制是否还在，在则 fallback uninstall_cmd
+            cli_names = IDE_INSTALL_META.get(ide_key, {}).get("cli_install", {}).get("cli_names", [])
+            # 从 detect.py 的 IDE_DETECT_META 获取 cli_names
+            try:
+                from .detect import IDE_DETECT_META
+                cli_names = IDE_DETECT_META.get(ide_key, {}).get("cli_names", cli_names)
+            except Exception:
+                pass
+            still_exists = any(shutil.which(n) for n in cli_names) if cli_names else False
+            if not still_exists:
+                return {
+                    "ok": True, "ide": ide_key, "mode": mode, "method": "npm",
+                    "message": "卸载成功", "cmd": r["cmd"],
+                    "stdout": r["stdout"][-2000:], "stderr": r["stderr"][-2000:],
+                }
+        # npm uninstall 失败或二进制仍在，fallback uninstall_cmd
+        uninstall_cmd = install_meta.get("uninstall_cmd", "")
+        if uninstall_cmd:
+            r2 = _run_cmd(["bash", "-c", uninstall_cmd], timeout=120)
+            return {
+                "ok": r2["ok"], "ide": ide_key, "mode": mode, "method": "npm",
+                "message": "卸载成功" if r2["ok"] else f"卸载失败 (exit={r2['returncode']})",
+                "cmd": uninstall_cmd, "stdout": r2["stdout"][-2000:], "stderr": r2["stderr"][-2000:],
+            }
         return {
             "ok": r["ok"], "ide": ide_key, "mode": mode, "method": "npm",
             "message": "卸载成功" if r["ok"] else f"卸载失败 (exit={r['returncode']})",
