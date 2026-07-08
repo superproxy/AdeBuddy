@@ -5,9 +5,8 @@ import { useUiStore } from './ui'
 
 export interface CmdItem {
   name: string
-  command: string
-  desc?: string
-  category?: string
+  description?: string
+  prompt?: string
 }
 
 export const useCmdStore = defineStore('cmd', () => {
@@ -26,14 +25,11 @@ export const useCmdStore = defineStore('cmd', () => {
     return r.ok
   }
   function addCmd() {
-    cmdData.commands.push({ name: '', command: '', desc: '', category: '' })
+    cmdData.commands.push({ name: '', description: '', prompt: '' })
   }
   function deleteCmd(idx: number) {
     cmdData.commands.splice(idx, 1)
   }
-  function copyCmd(command: string) {
-    navigator.clipboard.writeText(command).then(() => ui.toast('已复制到剪贴板'))
-  }
 
-  return { cmdData, loadCmd, saveCmd, addCmd, deleteCmd, copyCmd }
+  return { cmdData, loadCmd, saveCmd, addCmd, deleteCmd }
 })

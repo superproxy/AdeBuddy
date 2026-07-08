@@ -79,6 +79,11 @@ IDE_INSTALL_META = {
         "app_install": {"method": "cask", "package": "openclaw"},
         "homepage": "https://github.com/openclaw/openclaw",
     },
+    "Hermes": {
+        "cli_install": {"method": "manual", "url": ""},
+        "app_install": {"method": "manual", "url": ""},
+        "homepage": "",
+    },
     "WorkBuddy": {
         "cli_install": {"method": "manual", "url": "https://github.com/workbuddy/workbuddy"},
         "app_install": {"method": "manual", "url": "https://github.com/workbuddy/workbuddy"},

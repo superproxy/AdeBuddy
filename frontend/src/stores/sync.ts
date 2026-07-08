@@ -36,6 +36,7 @@ const DEFAULT_IDE_LIST: IdeItem[] = [
   { key: 'TraeSoloCN', label: 'Trae Work CN', desc: '.trae-solo-cn/rules' },
   { key: 'WorkBuddy', label: 'WorkBuddy', desc: '.workbuddy/rules + models.json' },
   { key: 'ZCode', label: 'ZCode', desc: '.zcode/zcode.json' },
+  { key: 'Hermes', label: 'Hermes', desc: '.ade-hermes/rules + mcp' },
 ]
 
 export const useSyncStore = defineStore('sync', () => {

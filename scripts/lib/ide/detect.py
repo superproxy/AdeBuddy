@@ -159,6 +159,15 @@ IDE_DETECT_META = {
         "sessions_subdir": "sessions",
         "is_tui": True,
     },
+    "Hermes": {
+        "label": "Hermes Agent",
+        "cli_names": ["hermes"],
+        "macos_apps": [],
+        "windows_apps": [],
+        "config_dirs": [".ade-hermes"],
+        "sessions_subdir": "sessions",
+        "is_tui": True,
+    },
     "WorkBuddy": {
         "label": "WorkBuddy",
         "cli_names": ["workbuddy"],

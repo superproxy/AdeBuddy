@@ -18,6 +18,7 @@ from .openclaw import OpenClawTarget
 from .idea import IdeATarget
 from .agents import AgentsTarget
 from .zcode import ZCodeTarget
+from .hermes import HermesTarget
 
 
 # IDE 注册表：名称 → 类（按字母顺序排列）
@@ -36,6 +37,7 @@ IDE_REGISTRY = {
     "TraeSoloCN": TraeSoloCNTarget,
     "WorkBuddy": WorkBuddyTarget,
     "ZCode": ZCodeTarget,
+    "Hermes": HermesTarget,
 }
 
 
