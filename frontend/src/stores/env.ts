@@ -51,6 +51,37 @@ export const useEnvStore = defineStore('env', () => {
     envData.llm._active_provider = name
     ui.toast('Active 设为: ' + name)
   }
+  /** 根据 api_key 前缀 + base_url 域名推断 Provider 名 + protocol */
+  function detectProvider(apiKey: string, baseUrl: string): { provider: string, protocol: string } {
+    const key = apiKey.toLowerCase()
+    const url = baseUrl.toLowerCase()
+    if (key.startsWith('sk-ant-') || url.includes('anthropic')) return { provider: 'anthropic', protocol: 'anthropic' }
+    if (url.includes('openai.com')) return { provider: 'openai', protocol: 'openai' }
+    if (url.includes('deepseek')) return { provider: 'deepseek', protocol: 'openai' }
+    if (url.includes('bigmodel') || url.includes('z.ai')) return { provider: 'bigmodel', protocol: 'openai' }
+    if (url.includes('dashscope') || url.includes('aliyuncs')) return { provider: 'qwen', protocol: 'openai' }
+    if (url.includes('volcengine') || url.includes('volces')) return { provider: 'volcengine', protocol: 'openai' }
+    if (url.includes('moonshot') || url.includes('kimi')) return { provider: 'moonshot', protocol: 'openai' }
+    if (key.startsWith('sk-')) return { provider: 'openai-compatible', protocol: 'openai' }
+    return { provider: 'custom', protocol: 'openai' }
+  }
+  /** 智能添加：输入 key（+可选 base_url），自动判断 Provider 并填充 */
+  function addSmartProvider() {
+    const apiKey = prompt('请输入 API Key（自动判断 Provider）')
+    if (!apiKey || !apiKey.trim()) return
+    const baseUrl = prompt('请输入 Base URL（可留空）') || ''
+    const { provider, protocol } = detectProvider(apiKey.trim(), baseUrl.trim())
+    if (envData.llm[provider]) {
+      ui.toast(`Provider "${provider}" 已存在，已填入 key`, 'warn')
+      envData.llm[provider][protocol] = envData.llm[provider][protocol] || { base_url: '', api_key: '', models: {} }
+      envData.llm[provider][protocol].api_key = apiKey.trim()
+      if (baseUrl.trim()) envData.llm[provider][protocol].base_url = baseUrl.trim()
+      return
+    }
+    envData.llm[provider] = { [protocol]: { base_url: baseUrl.trim(), api_key: apiKey.trim(), models: {} } }
+    if (!envData.llm._active_provider) envData.llm._active_provider = provider
+    ui.toast(`已添加 Provider: ${provider} (${protocol})`)
+  }
   function addProtocol(pn: string) {
     const proto = prompt('协议名称（如 openai/anthropic）')
     if (!proto || !proto.trim()) return
@@ -121,6 +152,6 @@ export const useEnvStore = defineStore('env', () => {
     envData, envDataText, openedProviders, providerNames, proxyEnabled,
     loadEnv, toggleProvider, updateEnvDataSection, addProvider, deleteProvider, setActiveProvider,
     addProtocol, deleteProtocol, addModel, deleteModel, renameModel, saveEnv,
-    generateProxyConfig, startProxyServer, verifyLlm,
+    generateProxyConfig, startProxyServer, verifyLlm, addSmartProvider, detectProvider,
   }
 })
