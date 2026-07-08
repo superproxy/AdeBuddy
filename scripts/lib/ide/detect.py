@@ -206,6 +206,7 @@ IDE_DETECT_META = {
         "config_dirs": ["./config/skills"],
         "sessions_subdir": None,
         "is_tui": False,
+        "type": "non-ide",  # 非 IDE（仅配置目录，无 CLI/App）
     },
     # 扩展：Kimi Code（非 IDE_REGISTRY 成员，作为 CLI 伙伴工具检测）
     "KimiCode": {
@@ -753,6 +754,7 @@ def detect_ide(ide_key: str) -> dict:
         "config_paths": config_paths,
         "sessions_dir": sessions_dir,
         "is_tui": is_tui,
+        "type": meta.get("type", "ide"),
     }
 
 

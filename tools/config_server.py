@@ -1918,52 +1918,72 @@ if __name__ == "__main__":
 # ============================================================
 # cmd/subagent 同步到 OpenCode
 # ============================================================
-@app.route("/api/cmd/sync-opencode", methods=["POST"])
-def sync_cmd_opencode():
-    """同步 cmd.yaml 到 ~/.config/opencode/commands/*.md"""
+@app.route("/api/cmd/sync", methods=["POST"])
+def sync_cmd():
+    """同步 cmd.yaml 到所有支持命令的 IDE。
+
+    支持命令的 IDE：
+    - OpenCode: ~/.config/opencode/commands/*.md
+    - Claude:   .claude/commands/*.md（项目根）
+    - OpenClaw: .openclaw/commands/*.md（项目根）
+    """
     import json as _json
     from pathlib import Path as _Path
     try:
         cmd_path = _ensure_cmd_file()
         data = load_env_config_file(cmd_path)
         commands = data.get("commands", []) if isinstance(data, dict) else []
-        oc_cmd_dir = _Path.home() / ".config" / "opencode" / "commands"
-        oc_cmd_dir.mkdir(parents=True, exist_ok=True)
-        count = 0
-        for cmd in commands:
-            name = cmd.get("name", "").strip()
-            if not name:
-                continue
-            safe_name = "".join(c for c in name if c.isalnum() or c in "-_")
-            if not safe_name:
-                continue
-            md = f"---\ndescription: {cmd.get('description', '')}\n---\n{cmd.get('prompt', '')}\n"
-            (oc_cmd_dir / f"{safe_name}.md").write_text(md, encoding="utf-8")
-            count += 1
-        return jsonify({"ok": True, "count": count, "path": str(oc_cmd_dir)})
+        # 各 IDE 的命令目录
+        targets = [
+            ("OpenCode", _Path.home() / ".config" / "opencode" / "commands"),
+            ("Claude", PROJECT_ROOT / ".claude" / "commands"),
+            ("OpenClaw", PROJECT_ROOT / ".openclaw" / "commands"),
+        ]
+        results = {}
+        for ide_name, cmd_dir in targets:
+            cmd_dir.mkdir(parents=True, exist_ok=True)
+            count = 0
+            for cmd in commands:
+                name = cmd.get("name", "").strip()
+                if not name:
+                    continue
+                safe_name = "".join(c for c in name if c.isalnum() or c in "-_")
+                if not safe_name:
+                    continue
+                md = f"---\ndescription: {cmd.get('description', '')}\n---\n{cmd.get('prompt', '')}\n"
+                (cmd_dir / f"{safe_name}.md").write_text(md, encoding="utf-8")
+                count += 1
+            results[ide_name] = count
+        total = sum(results.values())
+        return jsonify({"ok": True, "count": len(commands), "results": results,
+                        "message": f"已同步到 {', '.join(f'{k}({v})' for k,v in results.items() if v)}"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-@app.route("/api/subagent/sync-opencode", methods=["POST"])
-def sync_subagent_opencode():
-    """同步 subagent.yaml 到 opencode.json 的 agent 字段"""
+@app.route("/api/subagent/sync", methods=["POST"])
+def sync_subagent():
+    """同步 subagent.yaml 到所有支持 agent 的 IDE。
+
+    支持 agent 的 IDE：
+    - OpenCode: opencode.json 的 agent 字段
+    """
     import json as _json
     from pathlib import Path as _Path
     try:
         sa_path = _ensure_subagent_file()
         data = load_env_config_file(sa_path)
         subagents = data.get("subagents", []) if isinstance(data, dict) else []
+        results = {}
+        # OpenCode: opencode.json agent 字段
         oc_config = _Path.home() / ".config" / "opencode" / "opencode.json"
         oc_config.parent.mkdir(parents=True, exist_ok=True)
-        # 读已有 opencode.json（合并，不覆盖其他字段）
         existing = {}
         if oc_config.exists():
             try:
                 existing = _json.loads(oc_config.read_text(encoding="utf-8"))
             except Exception:
                 existing = {}
-        # 构建 agent 字段
         agents = existing.get("agent", {})
         if not isinstance(agents, dict):
             agents = {}
@@ -1981,6 +2001,8 @@ def sync_subagent_opencode():
             }
         existing["agent"] = agents
         oc_config.write_text(_json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        return jsonify({"ok": True, "count": len(subagents), "path": str(oc_config)})
+        results["OpenCode"] = len(subagents)
+        return jsonify({"ok": True, "count": len(subagents), "results": results,
+                        "message": f"已同步到 {', '.join(f'{k}({v})' for k,v in results.items())}"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500

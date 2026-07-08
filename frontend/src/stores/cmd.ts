@@ -32,8 +32,8 @@ export const useCmdStore = defineStore('cmd', () => {
   }
 
   async function syncToOpencode() {
-    const r = await api<{ ok: boolean; count?: number; error?: string }>("/api/cmd/sync-opencode", { method: "POST" })
-    if (r.ok) ui.toast(`已同步 ${r.count} 个命令到 OpenCode`)
+    const r = await api<{ ok: boolean; count?: number; error?: string }>("/api/cmd/sync", { method: "POST" })
+    if (r.ok) ui.toast(`已同步命令: ${r.message || r.count + " 个"}`)
     else ui.toast("同步失败: " + r.error, "err")
   }
 

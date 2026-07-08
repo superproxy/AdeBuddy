@@ -51,6 +51,7 @@ const {
               <div class="flex items-center gap-1.5">
                 <span class="font-bold text-base truncate" :title="it.label">{{ it.label }}</span>
                 <span v-if="it.installed" class="w-2 h-2 rounded-full bg-green-500" title="已安装"></span>
+                <span v-if="it.type === 'non-ide'" class="px-1 py-0.5 text-[8px] bg-ink-200 text-ink-600 rounded" title="非 IDE，仅配置目录">非IDE</span>
               </div>
               <div class="flex items-center gap-1 flex-wrap">
                 <button v-if="ideInstallInfo[it.key]?.cli" @click="setIdeCardTab(it.key, 'cli')"

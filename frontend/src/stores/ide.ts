@@ -21,6 +21,7 @@ export interface IdeDetect {
   config_paths: string[]
   sessions_dir: string
   is_tui?: boolean
+  type?: string  // 'ide'（默认）| 'non-ide'（非 IDE，仅配置目录）
 }
 
 export interface IdeSession {
