@@ -106,10 +106,14 @@ MCP_CONFIG_EXAMPLE = PROJECT_ROOT / "template" / "mcp" / "mcp-env-example.yaml"
 MCP_TEMPLATE = PROJECT_ROOT / "template" / "mcp" / "mcp.template.json"
 PLUGINS_DIR = PROJECT_ROOT / "template" / "plugins"
 SKILLS_CSV = PROJECT_ROOT / "template" / "skills" / "skills-index.csv"
-# 技能安装目录：下载/安装的技能放 config/skills/（内置的在 template/skills/）
-SKILL_YAML = PROJECT_ROOT / "config" / "skills" / "skill.yaml"
+# 技能安装目标：~/.agents/skills/（用户级，下载/插件安装的默认目录）
+AGENTS_SKILLS_INSTALL_DIR = Path.home() / ".agents" / "skills"
+# 项目级技能目录：config/skills/（复制的可用技能 + skill.yaml 启用清单）
+PROJECT_SKILLS_DIR = PROJECT_ROOT / "config" / "skills"
+SKILL_YAML = PROJECT_SKILLS_DIR / "skill.yaml"
 AGENTS_SKILLS_CACHE = PROJECT_ROOT / "template" / "skills"
-DOT_AGENTS_SKILLS = PROJECT_ROOT / "config" / "skills"
+# 安装目标（下载/插件/本地预置复制）
+DOT_AGENTS_SKILLS = AGENTS_SKILLS_INSTALL_DIR
 CMD_FILE = PROJECT_ROOT / "config" / "cmd" / "cmd.yaml"
 CMD_EXAMPLE = PROJECT_ROOT / "template" / "cmd" / "cmd.yaml"
 SUBAGENT_FILE = PROJECT_ROOT / "config" / "subagent" / "subagent.yaml"
@@ -147,6 +151,8 @@ def _ensure_config_dirs() -> None:
         PROJECT_ROOT / "config" / "ide" / "opencode",
         PROJECT_ROOT / "config" / "plugins",
         PROJECT_ROOT / "config" / "proxy",
+        # 用户级技能安装目录（~/.agents/skills/，下载/插件安装目标）
+        Path.home() / ".agents" / "skills",
     ]
     for d in config_dirs:
         d.mkdir(parents=True, exist_ok=True)
