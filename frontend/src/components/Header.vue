@@ -47,12 +47,6 @@ onMounted(async () => {
           class="text-xs px-3 py-1.5 rounded-md glass hover:bg-white/20 transition"
           >Skills 市场</a
         >
-        <a
-          href="/old"
-          target="_blank"
-          class="text-xs px-3 py-1.5 rounded-md glass hover:bg-white/20 transition"
-          >旧版 UI</a
-        >
       </div>
     </div>
     <nav class="max-w-[1600px] mx-auto px-6 flex gap-1">

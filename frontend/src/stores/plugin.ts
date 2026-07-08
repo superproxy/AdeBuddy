@@ -80,7 +80,8 @@ export const usePluginStore = defineStore('plugin', () => {
     }
   }
   function editPlugin(file: string) {
-    ui.toast('插件构建向导迁移中，暂用旧版 /old', 'warn')
+    selectedPluginFile.value = file
+    ui.toast('请在顶部切换到「插件构建」tab 继续编辑', 'warn')
   }
 
   return {
