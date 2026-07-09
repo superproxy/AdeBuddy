@@ -17,7 +17,7 @@ const cmdStore = useCmdStore()
 const subagentStore = useSubagentStore()
 const ui = useUiStore()
 const { ideList, syncTargetIdes, autoSync, syncing, dragIdeKey, dragOverIdeKey } = storeToRefs(sync)
-const { placement, floatPos, floatSize, dragging, hoverZone, headerOffset } = storeToRefs(layout)
+const { placement, floatPos, floatSize, dragging, hoverZone, headerOffset, expandTick } = storeToRefs(layout)
 const { installedIdes } = storeToRefs(ideStore)
 const { onIdeDragStart, onIdeDragOver, onIdeDrop, onIdeDragEnd } = sync
 
@@ -84,6 +84,9 @@ const actionHint = computed(() => {
   if (currentScope.value.kind === 'subagent') return '将同步 Subagent 到支持的 IDE'
   return `个目标将接收当前 ${currentScope.value.label} 配置`
 })
+
+/** LLM/MCP/Skills/插件需勾选 IDE；命令/Subagent 走专用 API */
+const needsIdeTargets = computed(() => currentScope.value?.kind === 'init-ide')
 
 const canSync = computed(() => {
   if (syncing.value || !currentScope.value) return false
@@ -449,7 +452,9 @@ function toggleCollapse() {
 }
 
 function onKeySnap(e: KeyboardEvent) {
-  if (!e.altKey || !e.shiftKey || !visible.value) return
+  // 停靠快捷键：Ctrl+Shift + 方向键 / F（窗口化）
+  // 找回面板请用顶栏「同步面板」或 Ctrl+Shift+S（在 App 层处理）
+  if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || !visible.value) return
   const map: Record<string, SyncBarPlacement> = {
     ArrowUp: 'top',
     ArrowDown: 'bottom',
@@ -460,6 +465,7 @@ function onKeySnap(e: KeyboardEvent) {
   const zone = map[e.code]
   if (!zone) return
   e.preventDefault()
+  collapsed.value = false
   snapTo(zone)
 }
 
@@ -491,12 +497,20 @@ function publishDockSize() {
   layout.setDockSize(rect.width, rect.height)
 }
 
+watch(expandTick, () => {
+  collapsed.value = false
+})
+
 watch([placement, collapsed, visible], async () => {
   await nextTick()
+  if (visible.value) layout.recoverVisibility()
   publishDockSize()
 })
 
 onMounted(() => {
+  // 恢复：清卡住的拖拽态，把飞出视口的浮窗拉回中间
+  layout.recoverVisibility()
+  collapsed.value = false
   window.addEventListener('keydown', onKeySnap)
   measureChrome()
   window.addEventListener('resize', measureChrome)
@@ -832,7 +846,7 @@ onBeforeUnmount(() => {
               {{ syncing ? '同步中...' : '同步到 IDE' }}
             </button>
             <div class="text-[10px] text-white/60 text-center leading-snug">
-              拖标题栏可停靠四边或窗口化 · Alt+Shift+方向键
+              拖标题栏可停靠四边或窗口化 · Ctrl+Shift+方向键 · 顶栏「同步面板」找回
             </div>
           </aside>
         </div>

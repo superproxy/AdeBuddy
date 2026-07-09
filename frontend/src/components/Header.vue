@@ -1,14 +1,30 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
+import { useSyncLayoutStore } from '../stores/syncLayout'
+
 interface TabItem {
   key: string
   label: string
 }
-defineProps<{ tab: string; tabs: TabItem[] }>()
-const emit = defineEmits<{ (e: 'update:tab', v: string): void }>()
+const props = defineProps<{ tab: string; tabs: TabItem[] }>()
+const emit = defineEmits<{
+  (e: 'update:tab', v: string): void
+  (e: 'restore-sync'): void
+}>()
 
+const layout = useSyncLayoutStore()
 const appVersion = ref('')
 const buildTime = ref('')
+
+const showRestoreSync = computed(() => props.tab !== 'plugin-build')
+
+function restoreSyncPanel() {
+  layout.resetToTopDock()
+  // AIDE 管理页默认隐藏 SyncBar，先切到 LLM 配置再展示
+  if (props.tab === 'ide') emit('update:tab', 'env')
+  emit('restore-sync')
+}
+
 onMounted(async () => {
   try {
     const r = await fetch('/api/version')
@@ -34,6 +50,15 @@ onMounted(async () => {
         </div>
       </div>
       <div class="flex items-center gap-2">
+        <button
+          v-if="showRestoreSync"
+          type="button"
+          class="text-xs px-3 py-1.5 rounded-md glass hover:bg-white/20 transition cursor-pointer border-0 text-white"
+          title="找回同步面板（Ctrl+Shift+S）"
+          @click="restoreSyncPanel"
+        >
+          同步面板
+        </button>
         <a
           href="https://www.modelscope.cn/mcp"
           target="_blank"

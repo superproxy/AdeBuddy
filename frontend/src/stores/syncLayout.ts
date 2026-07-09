@@ -45,7 +45,14 @@ function loadFloatPos(): FloatPos {
     const raw = localStorage.getItem(FLOAT_POS_KEY)
     if (raw) {
       const p = JSON.parse(raw)
-      if (typeof p?.x === 'number' && typeof p?.y === 'number') return p
+      if (
+        typeof p?.x === 'number' &&
+        typeof p?.y === 'number' &&
+        Number.isFinite(p.x) &&
+        Number.isFinite(p.y)
+      ) {
+        return p
+      }
     }
   } catch {
     /* ignore */
@@ -58,7 +65,12 @@ function loadFloatSize(): FloatSize {
     const raw = localStorage.getItem(FLOAT_SIZE_KEY)
     if (raw) {
       const p = JSON.parse(raw)
-      if (typeof p?.w === 'number' && typeof p?.h === 'number') {
+      if (
+        typeof p?.w === 'number' &&
+        typeof p?.h === 'number' &&
+        Number.isFinite(p.w) &&
+        Number.isFinite(p.h)
+      ) {
         return { w: Math.max(MIN_W, p.w), h: Math.max(MIN_H, p.h) }
       }
     }
@@ -77,6 +89,8 @@ export const useSyncLayoutStore = defineStore('syncLayout', () => {
   /** 面板占用尺寸，供主内容区避让 */
   const dockSize = ref({ width: 0, height: 0 })
   const headerOffset = ref(108)
+  /** 递增以通知 SyncBar 展开（找回面板时） */
+  const expandTick = ref(0)
 
   watch(placement, (v) => {
     try {
@@ -139,20 +153,61 @@ export const useSyncLayoutStore = defineStore('syncLayout', () => {
 
   function clampFloatPos(x: number, y: number, w = DEFAULT_W, h = DEFAULT_H): FloatPos {
     const pad = 12
-    const maxX = Math.max(pad, window.innerWidth - w - pad)
-    const maxY = Math.max(pad, window.innerHeight - h - pad)
+    const safeW = Number.isFinite(w) ? w : DEFAULT_W
+    const safeH = Number.isFinite(h) ? h : DEFAULT_H
+    const safeX = Number.isFinite(x) ? x : pad
+    const safeY = Number.isFinite(y) ? y : pad
+    const maxX = Math.max(pad, window.innerWidth - safeW - pad)
+    const maxY = Math.max(pad, window.innerHeight - safeH - pad)
     return {
-      x: Math.min(Math.max(pad, x), maxX),
-      y: Math.min(Math.max(pad, y), maxY),
+      x: Math.min(Math.max(pad, safeX), maxX),
+      y: Math.min(Math.max(pad, safeY), maxY),
     }
   }
 
   function clampFloatSize(w: number, h: number): FloatSize {
     const maxW = Math.max(MIN_W, window.innerWidth - 24)
     const maxH = Math.max(MIN_H, window.innerHeight - 24)
+    const safeW = Number.isFinite(w) ? w : DEFAULT_W
+    const safeH = Number.isFinite(h) ? h : DEFAULT_H
     return {
-      w: Math.min(Math.max(MIN_W, Math.round(w)), maxW),
-      h: Math.min(Math.max(MIN_H, Math.round(h)), maxH),
+      w: Math.min(Math.max(MIN_W, Math.round(safeW)), maxW),
+      h: Math.min(Math.max(MIN_H, Math.round(safeH)), maxH),
+    }
+  }
+
+  /** 启动/异常恢复：清拖拽态，把浮窗拉回可视区 */
+  function recoverVisibility() {
+    dragging.value = false
+    hoverZone.value = null
+    if (placement.value !== 'float') return
+    const size = clampFloatSize(floatSize.value.w, floatSize.value.h)
+    floatSize.value = size
+    const mostlyOff =
+      !Number.isFinite(floatPos.value.x) ||
+      !Number.isFinite(floatPos.value.y) ||
+      floatPos.value.x > window.innerWidth - 48 ||
+      floatPos.value.y > window.innerHeight - 48 ||
+      floatPos.value.x + size.w < 48 ||
+      floatPos.value.y + size.h < 48
+    if (mostlyOff) {
+      // 飞出视口时直接回顶部停靠，比悬在屏幕外更可发现
+      placement.value = 'top'
+      return
+    }
+    floatPos.value = clampFloatPos(floatPos.value.x, floatPos.value.y, size.w, size.h)
+  }
+
+  /** 一键重置到顶部停靠（找回面板） */
+  function resetToTopDock() {
+    dragging.value = false
+    hoverZone.value = null
+    placement.value = 'top'
+    expandTick.value += 1
+    try {
+      localStorage.setItem(PLACEMENT_KEY, 'top')
+    } catch {
+      /* ignore */
     }
   }
 
@@ -164,6 +219,7 @@ export const useSyncLayoutStore = defineStore('syncLayout', () => {
     hoverZone,
     dockSize,
     headerOffset,
+    expandTick,
     MIN_W,
     MIN_H,
     setPlacement,
@@ -174,5 +230,7 @@ export const useSyncLayoutStore = defineStore('syncLayout', () => {
     setHeaderOffset,
     clampFloatPos,
     clampFloatSize,
+    recoverVisibility,
+    resetToTopDock,
   }
 })

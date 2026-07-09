@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import Header from './components/Header.vue'
 import SyncBar from './components/SyncBar.vue'
@@ -19,6 +19,7 @@ import { useIdeStore } from './stores/ide'
 import { useEnvStore } from './stores/env'
 import { useMcpStore } from './stores/mcp'
 import { useSyncLayoutStore } from './stores/syncLayout'
+import { useUiStore } from './stores/ui'
 
 const tab = ref('ide')
 const tabs = [
@@ -35,6 +36,7 @@ const tabs = [
 const ide = useIdeStore()
 const env = useEnvStore()
 const mcp = useMcpStore()
+const ui = useUiStore()
 const syncLayout = useSyncLayoutStore()
 const { placement, dockSize } = storeToRefs(syncLayout)
 
@@ -63,17 +65,41 @@ const mainStyle = computed(() => {
   return Object.keys(pad).length ? pad : undefined
 })
 
+function restoreSyncPanel() {
+  syncLayout.resetToTopDock()
+  if (tab.value === 'ide' || tab.value === 'plugin-build') tab.value = 'env'
+  ui.toast('已找回同步面板')
+}
+
+/** Ctrl+Shift+S：找回同步面板（比 Alt+Shift 更不易被系统拦截） */
+function onGlobalKey(e: KeyboardEvent) {
+  if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) return
+  if (e.code !== 'KeyS' && e.key.toLowerCase() !== 's') return
+  e.preventDefault()
+  restoreSyncPanel()
+}
+
 onMounted(() => {
   ide.loadIdeDetect()
   env.loadEnv()
   mcp.loadMcpCatalog()
   mcp.loadMcpConfig()
+  syncLayout.recoverVisibility()
+  window.addEventListener('keydown', onGlobalKey)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onGlobalKey)
 })
 </script>
 
 <template>
   <div class="app-root min-h-screen">
-    <Header :tab="tab" :tabs="tabs" @update:tab="tab = $event" />
+    <Header
+      :tab="tab"
+      :tabs="tabs"
+      @update:tab="tab = $event"
+      @restore-sync="restoreSyncPanel"
+    />
 
     <main
       class="max-w-[1600px] w-full mx-auto px-6 py-5 transition-[padding] duration-200"
