@@ -117,6 +117,7 @@ jobs:
       - name: Build app + installer
         env:
           PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
         run: python build.py --clean --version ${{ steps.ver.outputs.version }}
 
       - name: Upload artifacts

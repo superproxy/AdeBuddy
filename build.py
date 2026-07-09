@@ -22,16 +22,33 @@
   依赖见 requirements-build.txt（pyinstaller）+ 运行时依赖（flask/pyyaml/requests/pywebview）
 """
 import argparse
+import io
 import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-# Windows CI (cp1252) 无法编码中文，强制 stdout/stderr 用 UTF-8
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+# Windows CI (cp1252) 无法编码中文，强制 stdout/stderr 用 UTF-8。
+# reconfigure 在某些 CI 环境不可用或无效，需兜底用 TextIOWrapper 重新包装 buffer。
+def _ensure_utf8_stream(stream):
+    if stream is None:
+        return None
+    enc = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
+    if enc == "utf8":
+        return stream
+    try:
+        stream.reconfigure(encoding="utf-8", errors="replace")
+        return stream
+    except (AttributeError, ValueError, OSError):
+        pass
+    buf = getattr(stream, "buffer", None)
+    if buf is not None:
+        return io.TextIOWrapper(buf, encoding="utf-8", errors="replace", line_buffering=True)
+    return stream
+
+sys.stdout = _ensure_utf8_stream(sys.stdout)
+sys.stderr = _ensure_utf8_stream(sys.stderr)
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 SPEC_FILE = PROJECT_ROOT / "app.spec"
