@@ -1,6 +1,6 @@
-name: productivity
+name: arch
 version: 1.0.0
-description: 生产力插件 - 提供需求分析、任务规划、项目管理能力
+description: 架构与生产力插件 - 提供需求分析、任务规划、项目管理、Superpowers 完整技能集
 author: AdeBuddy
 mcpServers:
   yuque-mcp:
@@ -32,12 +32,16 @@ mcpServers:
       AMAP_MAPS_API_KEY: ''
     disabled: false
 skills:
+  # ===== Superpowers 技能组 =====
+  - { name: superpowers, source: obra/superpowers, description: Superpowers 完整技能组 }
+  - { name: brainstorming, source: obra/superpowers@brainstorming, description: 头脑风暴与需求探索 }
+  # ===== 需求与规划 =====
   - { name: usecase-prd-skill, source: usecase-prd-skill, description: 用例驱动的 PRD 编写 }
   - { name: task-plan-skill, source: task-plan-skill, description: 任务拆解与排期 }
   - { name: weekly-report-skill, source: weekly-report-skill, description: 周报/月报生成 }
-  - { name: brainstorming, source: obra/superpowers@brainstorming, description: 头脑风暴与需求探索 }
+  - { name: bid-to-tender-skill, source: bid-to-tender-skill, description: 投标书生成 }
+  # ===== OpenSpec 工作流 =====
   - { name: openspec-explore, source: openspec-explore, description: OpenSpec 探索模式 }
   - { name: openspec-propose, source: openspec-propose, description: OpenSpec 提案 }
   - { name: openspec-apply-change, source: openspec-apply-change, description: OpenSpec 实施变更 }
   - { name: openspec-sync-specs, source: openspec-sync-specs, description: OpenSpec 同步规范 }
-  - { name: bid-to-tender-skill, source: bid-to-tender-skill, description: 投标书生成 }

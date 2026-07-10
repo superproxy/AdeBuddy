@@ -1,0 +1,38 @@
+name: frontend
+version: 1.0.0
+description: 前端开发插件 - 提供 React/Next.js 最佳实践、前端 UI 工程、性能优化能力
+author: AdeBuddy
+mcpServers: {}
+skills:
+  - name: react-best-practices
+    source: vercel-labs/skills
+    skill: react-best-practices
+    description: React/Next.js 最佳实践 - 组件结构、Hooks 规范、a11y、TypeScript、性能优化
+  - name: frontend-ui-engineering
+    source: addyosmani/agent-skills
+    skill: frontend-ui-engineering
+    description: 前端 UI 工程 - UI 组件工程化规范与最佳实践
+  - name: frontend-design
+    source: anthropics/skills
+    skill: frontend-design
+    description: 前端设计 - 创建具有独特性和高品质的生产级前端界面
+  - name: frontend-code-review
+    source: langgenius/dify
+    skill: frontend-code-review
+    description: 前端代码审查 - 针对 .tsx/.ts/.js 文件的质量、性能、业务逻辑分析
+  - name: cache-components
+    source: vercel/next.js
+    skill: cache-components
+    description: Next.js PPR 和缓存组件最佳实践
+  - name: webapp-testing
+    source: anthropics/skills
+    skill: webapp-testing
+    description: Web 应用测试 - 基于 Playwright 的自动化测试
+  - name: performance-optimization
+    source: addyosmani/agent-skills
+    skill: performance-optimization
+    description: 性能优化 - 前端性能瓶颈定位与优化指南
+  - name: browser-testing-with-devtools
+    source: addyosmani/agent-skills
+    skill: browser-testing-with-devtools
+    description: 开发者工具浏览器测试 - 基于 DevTools 的前端测试

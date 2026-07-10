@@ -1,0 +1,64 @@
+name: trae-work-skills
+version: 1.0.0
+description: Trae Work 必装 14 个 Skill - 覆盖开发工具、效率提升、界面设计、数据分析与内容创作
+author: AdeBuddy
+source: https://docs.trae.cn/work_14-must-install-skills-for-trae-solo
+mcpServers: {}
+skills:
+  # ===== 开发工具 =====
+  - name: git-commit
+    source: github/skills
+    skill: git-commit
+    description: Git 提交辅助 - 基于 Conventional Commits 规范，自动分析变更、拆分暂存、安全提交
+  - name: react-best-practices
+    source: vercel-labs/skills
+    skill: react-best-practices
+    description: React/Next.js 最佳实践 - 代码质量审查与性能优化（8 类 64 条规则）
+  - name: webapp-testing
+    source: anthropics/skills
+    skill: webapp-testing
+    description: Web 应用测试 - 基于 Playwright 的前端功能验证、UI 调试、截图与日志采集
+  - name: composition-patterns
+    source: vercel-labs/skills
+    skill: composition-patterns
+    description: 组件组合模式 - 复杂组件拆分与重构，优化组件结构与状态管理
+  # ===== 效率提升 =====
+  - name: agent-browser
+    source: vercel-labs/skills
+    skill: agent-browser
+    description: 浏览器自动化 CLI - 页面导航、表单填写、点击、截图、数据提取
+  - name: brainstorming
+    source: obra/superpowers
+    skill: brainstorming
+    description: 头脑风暴 - 开发前强制需求澄清，交互式对话形成可执行设计方案
+  # ===== 界面设计 =====
+  - name: figma
+    source: anthropics/skills
+    skill: figma
+    description: Figma 设计稿解析 - 生成前端代码，复用现有设计系统与组件规范
+  - name: frontend-design
+    source: anthropics/skills
+    skill: frontend-design
+    description: 前端设计 - 从零生成具有明确视觉风格的界面，排版/配色/动效整体设计
+  - name: frontend-skill
+    source: anthropics/skills
+    skill: frontend-skill
+    description: 前端构建 - 结构清晰且风格克制的界面，规范信息层级与排版
+  # ===== 数据分析 =====
+  - name: chart-visualization
+    source: anthropics/skills
+    skill: chart-visualization
+    description: 图表可视化 - 根据数据特征选择图表类型，展示趋势/对比/结构关系
+  - name: data-analysis
+    source: anthropics/skills
+    skill: data-analysis
+    description: 数据分析 - 基于 SQL 对 Excel/CSV 查询、聚合、多表关联分析
+  # ===== 内容创作 =====
+  - name: canvas-design
+    source: anthropics/skills
+    skill: canvas-design
+    description: 画布设计 - 生成海报、封面等原创静态视觉内容，构图与图形表达
+  - name: doc-coauthoring
+    source: anthropics/skills
+    skill: doc-coauthoring
+    description: 文档协作 - 分阶段协作流程组织与完善文档，生成结构清晰逻辑完整的文稿

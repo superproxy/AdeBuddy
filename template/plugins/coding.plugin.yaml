@@ -1,0 +1,31 @@
+name: coding
+version: 1.0.0
+description: 编码插件 - 提供多角色协作、敏捷开发、代码审查、实施规划能力
+author: AdeBuddy
+mcpServers: {}
+skills:
+  # ===== BMAD 敏捷多角色开发 =====
+  - name: bmad
+    source: aj-geddes/claude-code-bmad-skills
+    description: BMAD 敏捷开发 - 9 种专业角色、15 种标准工作流的全栈敏捷开发团队
+  # ===== agent-skills 代码审查角色 =====
+  - name: code-review-and-quality
+    source: addyosmani/agent-skills
+    skill: code-review-and-quality
+    description: 代码审查者 - 以资深工程师视角审视代码，关注健康度与可维护性
+  # ===== Superpowers 协作与规划 =====
+  - name: superpowers
+    source: obra/superpowers
+    description: Superpowers 完整技能组 - 头脑风暴、TDD、系统化调试、代码审查
+  - name: brainstorming
+    source: obra/superpowers
+    skill: brainstorming
+    description: 头脑风暴 - 动手前强制需求澄清与方案探索
+  - name: writing-plans
+    source: obra/superpowers
+    skill: writing-plans
+    description: 实施计划 - 复杂功能先列步骤，改动前知道从哪入手
+  - name: subagent-driven-development
+    source: obra/superpowers
+    skill: subagent-driven-development
+    description: 子代理驱动开发 - 大任务拆子任务，多 Agent 并行协作

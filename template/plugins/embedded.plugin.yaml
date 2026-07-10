@@ -1,0 +1,49 @@
+name: embedded
+version: 1.0.0
+description: 嵌入式开发插件 - 提供 Keil/GCC 构建、J-Link/OpenOCD 调试、串口/CAN 通信能力
+author: AdeBuddy
+mcpServers: {}
+skills:
+  - name: embeddedskills
+    source: zhinkgit/embeddedskills
+    description: 嵌入式开发全流程技能组 - 构建编译、烧录调试、通信监控、工作流编排
+  # ===== 构建类 =====
+  - name: keil
+    source: zhinkgit/embeddedskills
+    skill: keil
+    description: Keil MDK 工程 - 扫描、编译、重建、清理
+  - name: gcc
+    source: zhinkgit/embeddedskills
+    skill: gcc
+    description: CMake 型 GCC 工程 - 配置、编译、大小分析
+  # ===== 调试类 =====
+  - name: jlink
+    source: zhinkgit/embeddedskills
+    skill: jlink
+    description: J-Link 调试 - 烧录、内存/寄存器读写、RTT/SWO、GDB 调试
+  - name: openocd
+    source: zhinkgit/embeddedskills
+    skill: openocd
+    description: OpenOCD 调试 - 烧录、擦除、GDB/Telnet、Semihosting/ITM
+  - name: probe-rs
+    source: zhinkgit/embeddedskills
+    skill: probe-rs
+    description: probe-rs 探针 - 发现、烧录、复位、内存读写、GDB 调试、RTT
+  # ===== 通信类 =====
+  - name: serial
+    source: zhinkgit/embeddedskills
+    skill: serial
+    description: 串口通信 - 扫描、实时监控、发送数据、Hex 查看
+  - name: can
+    source: zhinkgit/embeddedskills
+    skill: can
+    description: CAN 通信 - CAN/CAN-FD 监控、发帧、DBC 解码、统计
+  - name: net
+    source: zhinkgit/embeddedskills
+    skill: net
+    description: 网络通信 - 抓包分析、连通性测试、端口扫描、流量统计
+  # ===== 编排类 =====
+  - name: workflow
+    source: zhinkgit/embeddedskills
+    skill: workflow
+    description: 工作流编排 - 自动识别工程、选择工具链、串联全流程

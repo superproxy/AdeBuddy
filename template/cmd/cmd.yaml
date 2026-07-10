@@ -16,3 +16,54 @@ commands:
     description: 生成文档
     prompt: |
       为指定模块/函数生成文档注释与 README，保持与现有风格一致。
+  - name: init
+    description: 初始化通用多 Agent 协作框架（Harness Engineering）
+    prompt: |
+      初始化通用多 Agent 协作框架（Harness Engineering）。
+
+      使用 `init-harness-agents` skill 执行以下操作：
+
+      1. **扫描项目**：读取 package.json、pom.xml、目录结构，识别技术栈与现有 agent 结构
+      2. **生成 Harness 配置**：创建 `agents/harness.yaml`，定义通用 Agent 角色（coordinator / analyst / creator / evaluator）
+      3. **生成 Agent 角色定义**：创建 `agents/roles/` 目录，为每个角色生成提示词模板
+      4. **生成工作流定义**：创建 `agents/workflows/`，定义多 agent 协作流程（协作 / 辩论 / 调研）
+      5. **生成 Harness AGENTS.md**：harness 工程的项目定位、agent 架构拓扑、协作流程、治理规则
+      6. **生成通信配置**：创建 `agents/communication.yaml`，定义 agent 间消息格式、路由规则
+      7. **确认并提交**：展示给用户确认后 git commit
+
+      如果 Harness 配置已存在，不要覆盖，而是 diff 展示建议改动。
+  - name: init-dev
+    description: 初始化代码开发多 Agent 协作框架（Harness Engineering — Dev 模式）
+    prompt: |
+      初始化代码开发多 Agent 协作框架（Harness Engineering — Dev 模式）。
+
+      使用 `init-dev-harness-agents` skill 执行以下操作：
+
+      1. **扫描项目**：读取 package.json、pom.xml、目录结构，识别技术栈与现有 agent 结构
+      2. **生成 Harness 配置**：创建 `agents/harness.yaml`，定义开发 Agent 角色（orchestrator / executor / reviewer）
+      3. **生成 Agent 角色定义**：创建 `agents/roles/` 目录，为每个角色生成提示词模板
+      4. **生成工作流定义**：创建 `agents/workflows/`，定义开发协作流程（开发 / 审查 / 调试）
+      5. **生成 Harness AGENTS.md**：harness 工程的项目定位、agent 架构拓扑、协作流程、治理规则
+      6. **生成通信配置**：创建 `agents/communication.yaml`，定义 agent 间消息格式、路由规则
+      7. **确认并提交**：展示给用户确认后 git commit
+
+      如果 Harness 配置已存在，不要覆盖，而是 diff 展示建议改动。
+  - name: loop
+    description: 启动多角色辩论工作流（Loop Engineering）
+    prompt: |
+      启动多角色辩论工作流（Loop Engineering），自动解析工作流定义、执行步骤、保存结果。
+
+      使用 `init-loop-agents` skill 自动执行以下操作：
+
+      1. **解析工作流**：读取 `agents/debate-workflow.yaml`，提取名称、输入、步骤、依赖关系、条件和循环
+      2. **收集输入**：`required: true` 的输入由用户提供，可选输入使用默认值
+      3. **构建执行顺序**：按 `depends_on` 拓扑排序，无依赖步骤并行执行
+      4. **执行步骤**：读取 `agents/roles/{role}.md`，化身该角色执行任务，变量替换、条件评估、循环控制
+      5. **保存结果**：全部输出保存到 `debates/{工作流名称}-{日期}/`
+      6. **同步能力**：辩论结束后检查是否需要更新角色武器库
+
+      角色和工作流由项目自行定义（`agents/debate-workflow.yaml` 与 `agents/roles/`）。执行引擎只做通用的事：解析 YAML → 拓扑排序 → 化身角色执行 → 保存结果。
+
+      支持参数：
+      - `/loop`：运行当前项目的工作流
+      - `/loop --resume`：从上次中断处继续

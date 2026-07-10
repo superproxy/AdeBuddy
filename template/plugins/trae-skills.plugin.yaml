@@ -1,0 +1,57 @@
+name: trae-skills
+version: 1.0.0
+description: Trae 研发场景十大热门 Skill 推荐 - 覆盖前端设计、前后端开发、代码审查、自动化测试、CI/CD、问题修复与文档维护
+author: AdeBuddy
+source: https://docs.trae.cn/ide_top-10-recommended-skills-for-development-scenarios
+mcpServers: {}
+skills:
+  # ===== 前端设计 =====
+  - name: frontend-design
+    source: anthropics/skills
+    skill: frontend-design
+    description: 前端设计 - 创建具有独特性和高品质的生产级前端界面，避免千篇一律的 AI 风格
+  # ===== 前端开发 =====
+  - name: cache-components
+    source: vercel/next.js
+    skill: cache-components
+    description: Next.js PPR 和缓存组件最佳实践 - 自动生成缓存优化组件、管理缓存失效
+  # ===== 全栈开发 =====
+  - name: fullstack-developer
+    source: Shubhamsaboo/awesome-llm-apps
+    skill: fullstack-developer
+    description: 全栈开发 - React (Next.js) + Node.js + 数据库，支持 API 开发、认证集成、部署
+  # ===== 代码审查（前端） =====
+  - name: frontend-code-review
+    source: langgenius/dify
+    skill: frontend-code-review
+    description: 前端代码审查 - 针对 .tsx/.ts/.js 文件，从代码质量、性能、业务逻辑三维度分析
+  # ===== 代码审查（通用） =====
+  - name: code-reviewer
+    source: google-gemini/gemini-cli
+    skill: code-reviewer
+    description: 通用代码审查 - 支持本地变更和远程 PR，多维度结构化反馈
+  # ===== 网页应用测试 =====
+  - name: webapp-testing
+    source: anthropics/skills
+    skill: webapp-testing
+    description: Web 应用测试 - 基于 Playwright，支持功能验证、UI 调试、截图与日志采集
+  # ===== CI/CD - PR 创建 =====
+  - name: pr-creator
+    source: google-gemini/gemini-cli
+    skill: pr-creator
+    description: PR 自动化 - 自动创建符合规范的 Pull Request，包含分支检查、模板应用、预检脚本
+  # ===== CI/CD - 格式修复 =====
+  - name: fix
+    source: facebook/react
+    skill: fix
+    description: 代码格式化与 Lint 修复 - 自动执行 Prettier 格式化和 Linting 检查
+  # ===== 文档维护 =====
+  - name: update-docs
+    source: vercel/next.js
+    skill: update-docs
+    description: 文档同步 - 根据代码变更自动分析、更新和创建文档
+  # ===== 技能发现 =====
+  - name: find-skills
+    source: vercel-labs/skills
+    skill: find-skills
+    description: 技能搜索 - 从开放生态中搜索、安装与管理各类模块化技能包

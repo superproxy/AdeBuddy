@@ -1,0 +1,20 @@
+name: testing
+version: 1.0.0
+description: 测试插件 - 提供测试驱动开发、系统化调试、边界用例生成能力
+author: AdeBuddy
+mcpServers: {}
+skills:
+  # ===== 测试驱动开发 =====
+  - name: test-driven-development
+    source: addyosmani/agent-skills
+    skill: test-driven-development
+    description: 测试工程师 - 测试策略设计、边界用例生成与覆盖率达标判定
+  - name: tdd
+    source: obra/superpowers
+    skill: test-driven-development
+    description: TDD 红-绿-重构工作流 - 先测试后代码，暴露边界条件
+  # ===== 系统化调试 =====
+  - name: systematic-debugging
+    source: obra/superpowers
+    skill: systematic-debugging
+    description: 系统化调试 - 四阶段结构化调试（观察→假设→测试→修复）
