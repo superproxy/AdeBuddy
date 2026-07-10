@@ -22,15 +22,33 @@
   依赖见 requirements-build.txt（pyinstaller）+ 运行时依赖（flask/pyyaml/requests/pywebview）
 """
 import argparse
+import io
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-# Windows CI (cp1252) 无法编码中文，强制 stdout/stderr 用 UTF-8
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+# Windows CI (cp1252) 无法编码中文，强制 stdout/stderr 用 UTF-8。
+# reconfigure 在某些 CI 环境不可用或无效，需兜底用 TextIOWrapper 重新包装 buffer。
+def _ensure_utf8_stream(stream):
+    if stream is None:
+        return None
+    enc = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
+    if enc == "utf8":
+        return stream
+    try:
+        stream.reconfigure(encoding="utf-8", errors="replace")
+        return stream
+    except (AttributeError, ValueError, OSError):
+        pass
+    buf = getattr(stream, "buffer", None)
+    if buf is not None:
+        return io.TextIOWrapper(buf, encoding="utf-8", errors="replace", line_buffering=True)
+    return stream
+
+sys.stdout = _ensure_utf8_stream(sys.stdout)
+sys.stderr = _ensure_utf8_stream(sys.stderr)
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 SPEC_FILE = PROJECT_ROOT / "app.spec"
@@ -52,6 +70,11 @@ SENSITIVE_FILES = {
     "config.yaml",       # proxy: config.template.yaml
 }
 # 绝不允许出现的密钥明文片段（命中即失败）
+# 分两类：
+#   - 前缀型（以 "-" 结尾）：如 sk-or-v1- / sk-proj-，属公开文档化的 Key 前缀，
+#     源码（如 provider_catalog.py 的指纹正则）合法引用前缀本身，不能仅凭前缀判泄漏。
+#     需前缀后紧跟 >=16 位真实 Key 材质 [A-Za-z0-9_-] 才算泄漏。
+#   - 完整密钥型：朴素子串匹配，命中即泄漏。
 SENSITIVE_TOKENS = [
     "sk-or-v1-",
     "sk-proj-",
@@ -62,6 +85,14 @@ SENSITIVE_TOKENS = [
     "uclcA910DZWGnbsYOqVSac897xgZhXyOAj4gBexX",
 ]
 
+# 前缀型 token 编译为「前缀 + >=16 位 Key 材质」的正则；完整密钥型用 None 表示走朴素子串
+SENSITIVE_PATTERNS: list[tuple[str, "re.Pattern[str] | None"]] = [
+    (
+        tok,
+        re.compile(re.escape(tok) + r"[A-Za-z0-9_-]{16,}") if tok.endswith("-") else None,
+    )
+    for tok in SENSITIVE_TOKENS
+]
 
 def info(msg: str) -> None:
     print(f"[build] {msg}")
@@ -118,7 +149,12 @@ def run_pyinstaller(windowed: bool) -> None:
 
 
 def verify_bundle() -> None:
-    """扫描 dist/ 产物，确认无敏感文件 / 无密钥明文。"""
+    """扫描 dist/ 产物，确认无敏感文件 / 无密钥明文。
+
+    前缀型 token（以 "-" 结尾，如 sk-or-v1-）需后跟 >=16 位真实 Key 材质才算泄漏，
+    避免 provider_catalog.py 等指纹识别代码中的合法前缀引用被误判；
+    完整密钥型 token 仍走朴素子串匹配。
+    """
     if not DIST_DIR.exists():
         fail("dist/ 不存在，构建未产出")
     leaked_files = []
@@ -136,10 +172,17 @@ def verify_bundle() -> None:
             text = p.read_text(encoding="utf-8", errors="ignore")
         except Exception:
             continue
-        for tok in SENSITIVE_TOKENS:
-            if tok in text:
-                leaked_tokens.append(f"{p.relative_to(PROJECT_ROOT)} (含 {tok})")
-                break
+        for tok, pat in SENSITIVE_PATTERNS:
+            if pat is None:
+                # 完整密钥型：朴素子串匹配
+                if tok in text:
+                    leaked_tokens.append(f"{p.relative_to(PROJECT_ROOT)} (含 {tok})")
+                    break
+            else:
+                # 前缀型：需前缀后紧跟 >=16 位 [A-Za-z0-9_-] 真实 Key 材质
+                if pat.search(text):
+                    leaked_tokens.append(f"{p.relative_to(PROJECT_ROOT)} (含 {tok}...)")
+                    break
     if leaked_files:
         fail("发现敏感文件被打包，构建中止:\n  " + "\n  ".join(leaked_files))
     if leaked_tokens:

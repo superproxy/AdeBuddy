@@ -37,7 +37,7 @@ function loadPlacement(): SyncBarPlacement {
   } catch {
     /* ignore */
   }
-  return 'top'
+  return 'left'
 }
 
 function loadFloatPos(): FloatPos {
