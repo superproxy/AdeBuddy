@@ -36,9 +36,9 @@ const SCOPE_META: Record<string, { key: string; label: string; kind: ScopeKind }
   env: { key: 'llm', label: 'LLM', kind: 'init-ide' },
   mcp: { key: 'mcp', label: 'MCP', kind: 'init-ide' },
   skill: { key: 'skill', label: 'Skills', kind: 'init-ide' },
-  command: { key: 'cmd', label: '命令', kind: 'cmd' },
+  command: { key: 'cmd', label: 'Command', kind: 'cmd' },
   subagent: { key: 'subagent', label: 'Subagent', kind: 'subagent' },
-  plugin: { key: 'plugin', label: '插件', kind: 'init-ide' },
+  plugin: { key: 'plugin', label: 'Plugin', kind: 'init-ide' },
 }
 
 const currentScope = computed(() => SCOPE_META[props.tab] ?? null)
