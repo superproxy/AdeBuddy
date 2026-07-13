@@ -2587,6 +2587,7 @@ def sync_subagent():
 
     支持 agent 的 IDE：
     - OpenCode: opencode.json 的 agent 字段
+    - ZCode: ~/.zcode/agents/<name>.md（frontmatter + body）
     """
     import json as _json
     from pathlib import Path as _Path
@@ -2595,6 +2596,7 @@ def sync_subagent():
         data = load_env_config_file(sa_path)
         subagents = data.get("subagents", []) if isinstance(data, dict) else []
         results = {}
+
         # OpenCode: opencode.json agent 字段
         oc_config = _Path.home() / ".config" / "opencode" / "opencode.json"
         oc_config.parent.mkdir(parents=True, exist_ok=True)
@@ -2622,6 +2624,66 @@ def sync_subagent():
         existing["agent"] = agents
         oc_config.write_text(_json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         results["OpenCode"] = len(subagents)
+
+        # ZCode: ~/.zcode/agents/<name>.md
+        zcode_agents_dir = _Path.home() / ".zcode" / "agents"
+        zcode_agents_dir.mkdir(parents=True, exist_ok=True)
+        zcode_count = 0
+        for sa in subagents:
+            name = sa.get("name", "").strip()
+            if not name:
+                continue
+            safe_name = "".join(c for c in name if c.isalnum() or c in "-_")
+            if not safe_name:
+                continue
+            # 字段映射：subagent.yaml → zcode agent .md
+            #   name → name
+            #   desc → description（desc 为空时用 role）
+            #   role → 拼入 description（"角色: <role>"）
+            #   category → color（映射为 zcode 的 color 值）
+            #   prompt → md body
+            description = sa.get("desc", "").strip()
+            role = sa.get("role", "").strip()
+            if role and description:
+                description = f"{description}（角色: {role}）"
+            elif role:
+                description = f"角色: {role}"
+            # category → color 映射
+            category = sa.get("category", "").strip()
+            color_map = {
+                "开发": "yellow",
+                "产品": "blue",
+                "通用": "green",
+            }
+            color = color_map.get(category, "yellow")
+            prompt = sa.get("prompt", "").strip()
+
+            # 生成 frontmatter + body
+            lines = [
+                "---",
+                f'name: "{safe_name}"',
+                f'description: "{description}"',
+                f'color: {color}',
+                "tools:",
+                "  - Read",
+                "  - Grep",
+                "  - Glob",
+                "  - Bash",
+                "  - Edit",
+                "  - Write",
+                "  - WebFetch",
+                "  - WebSearch",
+                "  - TodoWrite",
+                "---",
+                "",
+                prompt,
+                "",
+            ]
+            agent_md = zcode_agents_dir / f"{safe_name}.md"
+            agent_md.write_text("\n".join(lines), encoding="utf-8")
+            zcode_count += 1
+        results["ZCode"] = zcode_count
+
         return jsonify({"ok": True, "count": len(subagents), "results": results,
                         "message": f"已同步到 {', '.join(f'{k}({v})' for k,v in results.items())}"})
     except Exception as e:
