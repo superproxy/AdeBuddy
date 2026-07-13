@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
+import { onMounted } from 'vue'
 import { useIdeStore } from '../stores/ide'
 
 const ide = useIdeStore()
@@ -30,6 +31,8 @@ function currentTab(it: any): string {
   if (t) return t
   const info = ideInstallInfo.value[it.key]
   if (!info) return 'cli'
+  // 无 CLI（exe_path 为空）→ 默认 App tab
+  if (!it.exe_path && info.app) return 'app'
   if (!info.cli && info.app) return 'app'
   return 'cli'
 }
@@ -59,6 +62,11 @@ function currentInstalled(it: any): boolean {
 function busyKey(it: any): string {
   return it.key + ':' + currentTab(it)
 }
+
+// 进入 AIDE 管理页时自动检测（首次无数据才检测，避免重复请求）
+onMounted(() => {
+  if (!ide.ideDetects.length) loadIdeDetect()
+})
 </script>
 
 <template>
@@ -124,7 +132,7 @@ function busyKey(it: any): string {
               </div>
             </div>
             <div class="tags">
-              <button v-if="ideInstallInfo[it.key]?.cli" @click="setIdeCardTab(it.key, 'cli')"
+              <button v-if="ideInstallInfo[it.key]?.cli && it.exe_path" @click="setIdeCardTab(it.key, 'cli')"
                 :class="['tag', 'cli', { active: currentTab(it) === 'cli' }]" type="button">
                 <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                 CLI
@@ -183,7 +191,7 @@ function busyKey(it: any): string {
               <div class="ver">未检测到安装</div>
             </div>
             <div class="tags">
-              <span v-if="ideInstallInfo[it.key]?.cli" class="tag cli">
+              <span v-if="ideInstallInfo[it.key]?.cli && it.cli_names?.length" class="tag cli">
                 <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                 CLI
               </span>
@@ -191,7 +199,7 @@ function busyKey(it: any): string {
                 <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
                 App
               </span>
-              <span v-if="!ideInstallInfo[it.key]?.cli && !ideInstallInfo[it.key]?.app" class="tag none">可安装</span>
+              <span v-if="(!ideInstallInfo[it.key]?.cli || !it.cli_names?.length) && !ideInstallInfo[it.key]?.app" class="tag none">可安装</span>
             </div>
             <div class="path">
               <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
@@ -199,8 +207,8 @@ function busyKey(it: any): string {
             </div>
           </div>
           <div class="tile-foot">
-            <button v-if="ideInstallInfo[it.key]?.cli && ideInstallInfo[it.key]?.cli?.method !== 'manual'" @click="installIde(it.key, 'cli')" :disabled="ideInstalling === it.key + ':cli'" class="btn btn-sm btn-primary" type="button">{{ ideInstalling === it.key + ':cli' ? '...' : '安装 CLI' }}</button>
-            <a v-else-if="ideInstallInfo[it.key]?.cli?.url" :href="ideInstallInfo[it.key]?.cli?.url" target="_blank" class="btn btn-sm btn-ink">下载 CLI</a>
+            <button v-if="ideInstallInfo[it.key]?.cli && it.cli_names?.length && ideInstallInfo[it.key]?.cli?.method !== 'manual'" @click="installIde(it.key, 'cli')" :disabled="ideInstalling === it.key + ':cli'" class="btn btn-sm btn-primary" type="button">{{ ideInstalling === it.key + ':cli' ? '...' : '安装 CLI' }}</button>
+            <a v-else-if="ideInstallInfo[it.key]?.cli?.url && it.cli_names?.length" :href="ideInstallInfo[it.key]?.cli?.url" target="_blank" class="btn btn-sm btn-ink">下载 CLI</a>
             <button v-if="ideInstallInfo[it.key]?.app && ideInstallInfo[it.key]?.app?.method !== 'manual'" @click="installIde(it.key, 'app')" :disabled="ideInstalling === it.key + ':app'" class="btn btn-sm btn-primary" type="button">{{ ideInstalling === it.key + ':app' ? '...' : '安装 App' }}</button>
             <a v-else-if="ideInstallInfo[it.key]?.app?.url" :href="ideInstallInfo[it.key]?.app?.url" target="_blank" class="btn btn-sm btn-ink">下载 App</a>
             <a v-if="ideInstallInfo[it.key]?.homepage" :href="ideInstallInfo[it.key]?.homepage" target="_blank" class="btn btn-sm btn-ink">官网</a>

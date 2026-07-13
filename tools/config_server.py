@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 import webbrowser
 import zipfile
 from pathlib import Path
@@ -146,6 +147,10 @@ HOOKS_DIR = PROJECT_ROOT / "config" / "hooks"
 HOOKS_FILE = HOOKS_DIR / "hooks.json"
 HOOKS_TEMPLATE_DIR = PROJECT_ROOT / "template" / "hooks"
 HOOKS_EXAMPLE = HOOKS_TEMPLATE_DIR / "hooks.json"
+# 自建市场：config/marketplace/（索引 + zip 包）
+MARKETPLACE_DIR = PROJECT_ROOT / "config" / "marketplace"
+MARKETPLACE_PACKAGES_DIR = MARKETPLACE_DIR / "packages"
+MARKETPLACE_INDEX = MARKETPLACE_DIR / "index.json"
 
 # env.yaml 中属于 llm.yaml 的顶层键（其余归 mcp.yaml 的只有 mcp）
 LLM_TOP_KEYS = ["llm", "embedding", "tts", "asr", "vision", "misc"]
@@ -180,6 +185,8 @@ def _ensure_config_dirs() -> None:
         PROJECT_ROOT / "config" / "ide" / "codex",
         PROJECT_ROOT / "config" / "ide" / "opencode",
         PROJECT_ROOT / "config" / "plugins",
+        PROJECT_ROOT / "config" / "marketplace",
+        PROJECT_ROOT / "config" / "marketplace" / "packages",
         PROJECT_ROOT / "config" / "proxy",
         # 技能安装目录（项目级 .agents/skills/）
         PROJECT_ROOT / ".agents" / "skills",
@@ -195,6 +202,11 @@ _ensure_config_dirs()
 # ============================================================
 # 通用工具
 # ============================================================
+def _now_iso() -> str:
+    """当前 UTC 时间 ISO 字符串。"""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _ensure_llm_file() -> Path:
     """确保 llm.yaml 存在。
     优先级：
@@ -1338,30 +1350,45 @@ def _collect_plugin_hooks(cfg: dict) -> Path | None:
     return None
 
 
-def _add_plugin_extras_to_zip(zf: zipfile.ZipFile, cfg: dict) -> None:
-    """将 plugin 关联的 llm/subagents/rules/commands/hooks 打包到 zip。"""
+def _add_plugin_extras_to_zip(zf: zipfile.ZipFile, cfg: dict, seen: set[str] | None = None) -> None:
+    """将 plugin 关联的 llm/subagents/rules/commands/hooks 打包到 zip。
+
+    Args:
+        seen: 多插件导出时传入的去重集合，避免 llm.yaml / subagents.yaml 等
+              同名文件重复写入 zip。单插件导出不传（None）时跳过去重。
+    """
+    def _should_write(name: str) -> bool:
+        if seen is None:
+            return True
+        if name in seen:
+            return False
+        seen.add(name)
+        return True
+
     # llm.yaml
     llm_yaml_str = _collect_plugin_llm(cfg)
-    if llm_yaml_str:
+    if llm_yaml_str and _should_write("llm.yaml"):
         zf.writestr("llm.yaml", llm_yaml_str)
 
     # subagents.yaml
     sa_yaml_str = _collect_plugin_subagents(cfg)
-    if sa_yaml_str:
+    if sa_yaml_str and _should_write("subagents.yaml"):
         zf.writestr("subagents.yaml", sa_yaml_str)
 
     # rules/*.md
     for rel, rule_path in _collect_plugin_rules(cfg):
-        zf.write(rule_path, arcname=f"rules/{rel}")
+        arc = f"rules/{rel}"
+        if _should_write(arc):
+            zf.write(rule_path, arcname=arc)
 
     # commands.yaml
     cmd_yaml_str = _collect_plugin_commands(cfg)
-    if cmd_yaml_str:
+    if cmd_yaml_str and _should_write("commands.yaml"):
         zf.writestr("commands.yaml", cmd_yaml_str)
 
     # hooks/hooks.json
     hooks_path = _collect_plugin_hooks(cfg)
-    if hooks_path:
+    if hooks_path and _should_write("hooks/hooks.json"):
         zf.write(hooks_path, arcname="hooks/hooks.json")
 
 
@@ -1528,6 +1555,7 @@ def export_all_plugins():
     buf = io.BytesIO()
     seen_skills: set[str] = set()
     seen_files: set[str] = set()
+    seen_extras: set[str] = set()  # 去重 llm.yaml / subagents.yaml 等
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for plugins_dir in _plugin_search_dirs():
             if not plugins_dir.exists():
@@ -1544,7 +1572,7 @@ def export_all_plugins():
                             continue
                         seen_skills.add(skill_name)
                         _add_dir_to_zip(zf, skill_dir, arc_prefix=f"skills/{skill_name}")
-                    _add_plugin_extras_to_zip(zf, cfg)
+                    _add_plugin_extras_to_zip(zf, cfg, seen_extras)
                 except Exception:
                     pass  # 单个插件解析失败不阻塞
     buf.seek(0)
@@ -1569,6 +1597,7 @@ def export_selected_plugins():
 
     buf = io.BytesIO()
     seen_skills: set[str] = set()
+    seen_extras: set[str] = set()  # 去重 llm.yaml / subagents.yaml 等
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for fname in files:
             fname = fname.strip()
@@ -1585,7 +1614,7 @@ def export_selected_plugins():
                         continue
                     seen_skills.add(skill_name)
                     _add_dir_to_zip(zf, skill_dir, arc_prefix=f"skills/{skill_name}")
-                _add_plugin_extras_to_zip(zf, cfg)
+                _add_plugin_extras_to_zip(zf, cfg, seen_extras)
             except Exception:
                 pass  # 单个插件解析失败不阻塞
     buf.seek(0)
@@ -3400,3 +3429,179 @@ def sync_subagent():
                         "message": f"已同步到 {', '.join(f'{k}({v})' for k,v in results.items())}"})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ============================================================
+# 自建插件市场
+# ============================================================
+def _load_marketplace_index() -> list[dict]:
+    """读取市场索引，不存在则返回空列表。"""
+    if not MARKETPLACE_INDEX.exists():
+        return []
+    try:
+        data = json.loads(MARKETPLACE_INDEX.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_marketplace_index(items: list[dict]) -> None:
+    """保存市场索引。"""
+    MARKETPLACE_DIR.mkdir(parents=True, exist_ok=True)
+    MARKETPLACE_INDEX.write_text(
+        json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+@app.route("/api/marketplace", methods=["GET"])
+def marketplace_list():
+    """浏览市场。支持 ?q= 搜索（匹配 name/description/tags）。"""
+    q = (request.args.get("q") or "").strip().lower()
+    items = _load_marketplace_index()
+    if q:
+        filtered = []
+        for it in items:
+            haystack = " ".join([
+                it.get("name", ""),
+                it.get("description", ""),
+                it.get("author", ""),
+                " ".join(it.get("tags", [])),
+            ]).lower()
+            if q in haystack:
+                filtered.append(it)
+        items = filtered
+    return jsonify({"ok": True, "data": items, "total": len(items)})
+
+
+@app.route("/api/marketplace/publish", methods=["POST"])
+def marketplace_publish():
+    """发布插件到市场。
+
+    Body: {file: "xxx.plugin.yaml", tags: ["dev", "backend"]}
+    流程：
+      1. 调用 export_plugin 逻辑生成完整智能体 zip（plugin + skills + llm + rules + commands + subagents + hooks）
+      2. 复制到 config/marketplace/packages/<name>-<version>.zip
+      3. 在 index.json 中添加/更新条目
+    """
+    body = request.get_json(force=True)
+    fname = (body.get("file") or "").strip()
+    tags = body.get("tags") or []
+    if not fname:
+        return jsonify({"ok": False, "error": "缺少 file 参数"}), 400
+    path = _resolve_plugin_path(fname)
+    if path is None:
+        return jsonify({"ok": False, "error": "插件文件不存在"}), 404
+
+    try:
+        cfg = load_env_config_file(path)
+        plugin_name = cfg.get("name", path.stem)
+        version = cfg.get("version", "1.0.0").strip() or "1.0.0"
+        description = cfg.get("description", "").strip()
+        author = cfg.get("author", "AdeBuddy").strip() or "AdeBuddy"
+        skill_dirs = _collect_plugin_skill_dirs(cfg)
+
+        # 生成完整智能体 zip
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(path, arcname=fname)
+            for skill_name, skill_dir in skill_dirs:
+                _add_dir_to_zip(zf, skill_dir, arc_prefix=f"skills/{skill_name}")
+            _add_plugin_extras_to_zip(zf, cfg)
+        buf.seek(0)
+
+        # 保存到 marketplace/packages/
+        safe_name = "".join(c for c in plugin_name if c.isalnum() or c in ("-", "_"))
+        pkg_name = f"{safe_name or 'plugin'}-{version}.zip"
+        MARKETPLACE_PACKAGES_DIR.mkdir(parents=True, exist_ok=True)
+        pkg_path = MARKETPLACE_PACKAGES_DIR / pkg_name
+        pkg_path.write_bytes(buf.getvalue())
+        pkg_size = pkg_path.stat().st_size
+
+        # 更新索引
+        items = _load_marketplace_index()
+        item_id = f"{plugin_name}-{version}"
+        # 移除同 id 旧条目（重新发布）
+        items = [it for it in items if it.get("id") != item_id]
+        entry = {
+            "id": item_id,
+            "name": plugin_name,
+            "version": version,
+            "description": description,
+            "author": author,
+            "file": f"packages/{pkg_name}",
+            "size": pkg_size,
+            "published_at": _now_iso(),
+            "tags": tags if isinstance(tags, list) else [],
+            "downloads": 0,
+        }
+        items.append(entry)
+        _save_marketplace_index(items)
+
+        return jsonify({"ok": True, "data": entry})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/marketplace/download", methods=["GET"])
+def marketplace_download():
+    """下载市场中的插件 zip。Query: id=xxx"""
+    item_id = (request.args.get("id") or "").strip()
+    if not item_id:
+        return jsonify({"ok": False, "error": "缺少 id 参数"}), 400
+    items = _load_marketplace_index()
+    entry = next((it for it in items if it.get("id") == item_id), None)
+    if not entry:
+        return jsonify({"ok": False, "error": "插件不存在"}), 404
+    pkg_path = MARKETPLACE_DIR / entry["file"]
+    if not pkg_path.exists():
+        return jsonify({"ok": False, "error": "包文件丢失"}), 404
+    # 增加下载计数
+    entry["downloads"] = entry.get("downloads", 0) + 1
+    _save_marketplace_index(items)
+    buf = io.BytesIO(pkg_path.read_bytes())
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name=Path(entry["file"]).name,
+                     mimetype="application/zip")
+
+
+@app.route("/api/marketplace/install", methods=["GET"])
+def marketplace_install():
+    """从市场安装插件。Query: id=xxx
+
+    读取 packages/ 下的 zip，调用 _import_plugin_zip 解压到对应目录。
+    """
+    item_id = (request.args.get("id") or "").strip()
+    if not item_id:
+        return jsonify({"ok": False, "error": "缺少 id 参数"}), 400
+    items = _load_marketplace_index()
+    entry = next((it for it in items if it.get("id") == item_id), None)
+    if not entry:
+        return jsonify({"ok": False, "error": "插件不存在"}), 404
+    pkg_path = MARKETPLACE_DIR / entry["file"]
+    if not pkg_path.exists():
+        return jsonify({"ok": False, "error": "包文件丢失"}), 404
+    try:
+        buf = io.BytesIO(pkg_path.read_bytes())
+        return _import_plugin_zip(buf, overwrite=True)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/marketplace/remove", methods=["DELETE"])
+def marketplace_remove():
+    """从市场移除插件。Query: id=xxx"""
+    item_id = (request.args.get("id") or "").strip()
+    if not item_id:
+        return jsonify({"ok": False, "error": "缺少 id 参数"}), 400
+    items = _load_marketplace_index()
+    entry = next((it for it in items if it.get("id") == item_id), None)
+    if not entry:
+        return jsonify({"ok": False, "error": "插件不存在"}), 404
+    # 删除包文件
+    pkg_path = MARKETPLACE_DIR / entry["file"]
+    if pkg_path.exists():
+        pkg_path.unlink()
+    # 从索引移除
+    items = [it for it in items if it.get("id") != item_id]
+    _save_marketplace_index(items)
+    return jsonify({"ok": True, "id": item_id})

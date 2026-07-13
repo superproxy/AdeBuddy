@@ -107,7 +107,7 @@ IDE_DETECT_META = {
     },
     "TraeSoloCN": {
         "label": "Trae Work CN",
-        "cli_names": ["trae-solo-cn"],
+        "cli_names": [],
         "macos_apps": ["/Applications/Trae Solo CN.app"],
         "windows_apps": [
             "{LOCALAPPDATA}/Programs/Trae Solo CN/Trae Solo CN.exe",
@@ -170,7 +170,7 @@ IDE_DETECT_META = {
     },
     "WorkBuddy": {
         "label": "WorkBuddy",
-        "cli_names": ["workbuddy", "codebuddy"],
+        "cli_names": [],
         "macos_apps": ["/Applications/WorkBuddy.app"],
         "windows_apps": [],
         "config_dirs": [".workbuddy"],
@@ -179,7 +179,7 @@ IDE_DETECT_META = {
     },
     "IDEA": {
         "label": "IDEA",
-        "cli_names": ["idea", "idea64"],
+        "cli_names": [],
         "macos_apps": [
             "/Applications/IntelliJ IDEA.app",
             "/Applications/IntelliJ IDEA CE.app",
@@ -755,6 +755,7 @@ def detect_ide(ide_key: str) -> dict:
         "sessions_dir": sessions_dir,
         "is_tui": is_tui,
         "type": meta.get("type", "ide"),
+        "cli_names": meta.get("cli_names", []),
     }
 
 

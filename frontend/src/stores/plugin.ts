@@ -5,6 +5,7 @@ import { runSse } from '../api/sse'
 import { useUiStore } from './ui'
 import { useSyncStore } from './sync'
 import { useSkillStore } from './skill'
+import { useMarketplaceStore } from './marketplace'
 
 export interface PluginItem {
   file: string
@@ -20,6 +21,7 @@ export const usePluginStore = defineStore('plugin', () => {
   const ui = useUiStore()
   const sync = useSyncStore()
   const skill = useSkillStore()
+  const marketplace = useMarketplaceStore()
   const plugins = ref<PluginItem[]>([])
   const selectedPluginFile = ref('')
   const installingPlugin = ref('')
@@ -44,14 +46,22 @@ export const usePluginStore = defineStore('plugin', () => {
           reader.onerror = reject
           reader.readAsDataURL(blob)
         })
-        const res = await pw.api.save_file(filename, b64)
+        // pywebview JS bridge 返回值可能是 {result: {...}} 或直接返回 dict
+        const raw = await pw.api.save_file(filename, b64)
+        const res = raw?.result ?? raw
         if (res?.ok) ui.toast(`已保存到: ${res.path}`)
-        else if (res?.error !== 'cancelled') ui.toast('保存失败: ' + (res?.error || ''), 'err')
+        else if (res?.error !== 'cancelled') ui.toast('保存失败: ' + (res?.error || JSON.stringify(raw)), 'err')
       } catch (e: any) {
         ui.toast('导出失败: ' + (e?.message || e), 'err')
       }
     } else {
-      window.location.href = url
+      // 浏览器模式：用 a 标签触发下载（比 location.href 更可靠）
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
     }
   }
 
@@ -153,12 +163,17 @@ export const usePluginStore = defineStore('plugin', () => {
     selectedPluginFile.value = file
     ui.toast('请在顶部切换到「插件构建」tab 继续编辑', 'warn')
   }
+  async function publishToMarketplace(file: string) {
+    const tags = prompt('请输入标签（逗号分隔，可留空）：', '')
+    const tagList = tags ? tags.split(/[,，]/).map((t: string) => t.trim()).filter(Boolean) : []
+    await marketplace.publish(file, tagList)
+  }
 
   return {
     plugins, selectedPluginFile, installingPlugin, importPluginInput,
     selectedForExport,
     refreshPluginList, exportPlugin, triggerImportPlugin,
     toggleSelectForExport, toggleSelectAllForExport, exportSelectedPlugins,
-    onImportPluginFile, onTogglePlugin, editPlugin,
+    onImportPluginFile, onTogglePlugin, editPlugin, publishToMarketplace,
   }
 })

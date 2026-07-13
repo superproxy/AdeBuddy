@@ -72,6 +72,8 @@
   "small_model": "openai/gpt-4o-mini",
   "mcp": {},
 
+  "lsp": true,
+
   "agent": {
     "review": {
       "description": "Reviews code for best practices and potential issues"

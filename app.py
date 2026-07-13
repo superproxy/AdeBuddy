@@ -175,40 +175,137 @@ class _DownloadApi:
     """
     def save_file(self, filename, data_base64):
         import base64 as _b64
-        import tkinter as _tk
-        from tkinter import filedialog as _fd
+        import sys as _sys
+        import subprocess as _sp
+        import os as _os
 
-        root = _tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
+        # macOS：用 osascript 弹原生保存对话框（不依赖 tkinter）
+        if _sys.platform == "darwin":
+            ext = "." + filename.rsplit(".", 1)[-1] if "." in filename else ".zip"
+            prompt = f"选择保存位置（{filename}）"
+            # AppleScript choose file name 弹保存对话框
+            script = (
+                f'set theFile to choose file name with prompt "{prompt}" '
+                f'default name "{filename}"'
+            )
+            try:
+                r = _sp.run(
+                    ["osascript", "-e", script],
+                    capture_output=True, text=True, timeout=120,
+                )
+            except Exception as e:
+                return {"ok": False, "error": f"保存对话框失败: {e}"}
 
-        # 根据扩展名推断文件类型过滤器
-        ext = "." + filename.rsplit(".", 1)[-1] if "." in filename else ".zip"
-        if ext == ".zip":
-            filetypes = [("ZIP 压缩包", "*.zip"), ("所有文件", "*.*")]
-        elif ext in (".yaml", ".yml"):
-            filetypes = [("YAML 文件", "*.yaml *.yml"), ("所有文件", "*.*")]
-        else:
-            filetypes = [("所有文件", "*.*")]
+            if r.returncode != 0:
+                # 用户点了取消（error -128）或其他错误
+                if "-128" in (r.stderr or "") or "User canceled" in (r.stderr or ""):
+                    return {"ok": False, "error": "cancelled"}
+                return {"ok": False, "error": f"保存对话框失败: {r.stderr.strip()}"}
 
-        path = _fd.asksaveasfilename(
-            defaultextension=ext,
-            initialfile=filename,
-            filetypes=filetypes,
-            parent=root,
-        )
-        root.destroy()
+            # osascript 返回格式：alias "Macintosh HD:Users:...:file.zip"
+            # 或 POSIX path：file "Macintosh HD:Users:...:file.zip"
+            raw_out = (r.stdout or "").strip()
+            if not raw_out:
+                return {"ok": False, "error": "cancelled"}
 
-        if not path:
-            return {"ok": False, "error": "cancelled"}
+            # 解析 AppleScript 返回的路径
+            path = _osascript_to_posix(raw_out)
+            if not path:
+                return {"ok": False, "error": f"无法解析路径: {raw_out}"}
 
+            try:
+                raw = _b64.b64decode(data_base64)
+                with open(path, "wb") as f:
+                    f.write(raw)
+                return {"ok": True, "path": path}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
+        # Windows/Linux：尝试 tkinter，回退到 Downloads 目录
         try:
+            import tkinter as _tk
+            from tkinter import filedialog as _fd
+
+            root = _tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+
+            ext = "." + filename.rsplit(".", 1)[-1] if "." in filename else ".zip"
+            if ext == ".zip":
+                filetypes = [("ZIP 压缩包", "*.zip"), ("所有文件", "*.*")]
+            elif ext in (".yaml", ".yml"):
+                filetypes = [("YAML 文件", "*.yaml *.yml"), ("所有文件", "*.*")]
+            else:
+                filetypes = [("所有文件", "*.*")]
+
+            path = _fd.asksaveasfilename(
+                defaultextension=ext,
+                initialfile=filename,
+                filetypes=filetypes,
+                parent=root,
+            )
+            root.destroy()
+
+            if not path:
+                return {"ok": False, "error": "cancelled"}
+
             raw = _b64.b64decode(data_base64)
             with open(path, "wb") as f:
                 f.write(raw)
             return {"ok": True, "path": path}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        except ImportError:
+            # tkinter 不可用，回退到 Downloads 目录
+            downloads = _os.path.join(_os.path.expanduser("~"), "Downloads")
+            if not _os.path.isdir(downloads):
+                downloads = _os.path.expanduser("~")
+            path = _os.path.join(downloads, filename)
+            try:
+                raw = _b64.b64decode(data_base64)
+                with open(path, "wb") as f:
+                    f.write(raw)
+                return {"ok": True, "path": path}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
+
+def _osascript_to_posix(raw: str) -> str:
+    """将 osascript choose file name 的返回值转为 POSIX 路径。
+
+    返回格式可能为：
+      alias "Macintosh HD:Users:foo:bar.zip"
+      file "Macintosh HD:Users:foo:bar.zip"
+      POSIX file "/Users/foo/bar.zip"
+    """
+    import os as _os
+    raw = raw.strip()
+
+    # POSIX file "/path/to/file"
+    if raw.startswith("POSIX file"):
+        # 提取引号中的路径
+        start = raw.find('"')
+        end = raw.rfind('"')
+        if start >= 0 and end > start:
+            return raw[start + 1:end]
+
+    # alias "Macintosh HD:Users:..." 或 file "Macintosh HD:Users:..."
+    start = raw.find('"')
+    end = raw.rfind('"')
+    if start >= 0 and end > start:
+        hfs_path = raw[start + 1:end]
+        # HFS 路径用 : 分隔，第一段是卷名
+        parts = hfs_path.split(":")
+        if len(parts) >= 2:
+            # Macintosh HD:Users:foo:bar.zip → /Users/foo/bar.zip
+            # 去掉卷名，前面加 /
+            posix = "/" + "/".join(parts[1:])
+            # 验证路径是否存在其父目录
+            return posix
+
+    # 直接是 POSIX 路径
+    if raw.startswith("/"):
+        return raw
+
+    return ""
 
 
 def open_with_pywebview(url: str, title: str = "AdeBuddy 配置工具", width: int = 1400, height: int = 900) -> bool:

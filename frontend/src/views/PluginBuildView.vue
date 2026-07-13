@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { usePluginBuildStore, wizardSteps } from '../stores/pluginBuild'
 import { useEnvStore } from '../stores/env'
@@ -11,11 +11,18 @@ const env = useEnvStore()
 const mcp = useMcpStore()
 const skill = useSkillStore()
 const plugin = usePluginStore()
-const { pluginForm, selectedSkills, selectedMcp, selectedLlm, ideImport, ideImportStats, importedIdeMcp, importedIdeSkills, wizardStep, buildMode, mcpFilterText, importing } = storeToRefs(pb)
+const { pluginForm, selectedSkills, selectedMcp, selectedLlm,
+  selectedSubagents, selectedRules, selectedCommands, hooksEnabled,
+  availableSubagents, availableRules, availableCommands,
+  ideImport, ideImportStats, importedIdeMcp, importedIdeSkills, wizardStep, buildMode, mcpFilterText, importing } = storeToRefs(pb)
 const { mcpTemplate } = storeToRefs(mcp)
 const { localSkills, skillCategories, filteredLocalSkills, skillFilter } = storeToRefs(skill)
 const { plugins, selectedPluginFile } = storeToRefs(plugin)
-const { toggleSkill, toggleMcp, toggleLlm, llmKey, wizardNext, wizardPrev, wizardGoto, newPlugin, importFromIde, importAllIdeMcp, importAllIdeSkills, applyImportedMcp, applyImportedSkills, applyImportedLlm, loadExistingPlugin, previewPlugin, savePluginFile, installPluginFile } = pb
+const { toggleSkill, toggleMcp, toggleLlm, toggleSubagent, toggleRule, toggleCommand,
+  llmKey, wizardNext, wizardPrev, wizardGoto, newPlugin, loadBuildSources,
+  importFromIde, importAllIdeMcp, importAllIdeSkills, applyImportedMcp, applyImportedSkills, applyImportedLlm,
+  loadExistingPlugin, previewPlugin, savePluginFile, installPluginFile } = pb
+const { loadLocalSkills } = skill
 const localLlmList = computed(() => {
   const llm = env.envData.llm || {}
   const out: any[] = []
@@ -29,6 +36,7 @@ const localLlmList = computed(() => {
   }
   return out
 })
+onMounted(() => { loadLocalSkills(); loadBuildSources() })
 </script>
 <template>
   <div class="space-y-3">
@@ -37,10 +45,14 @@ const localLlmList = computed(() => {
         <span class="text-xs text-ink-500">构建来源:</span>
         <button @click="buildMode = 'local'" :class="['px-3 py-1 text-xs rounded-lg transition', buildMode === 'local' ? 'bg-brand-500 text-white' : 'bg-ink-100 text-ink-600 hover:bg-ink-200']">本地仓库</button>
         <button @click="buildMode = 'ide'" :class="['px-3 py-1 text-xs rounded-lg transition', buildMode === 'ide' ? 'bg-brand-500 text-white' : 'bg-ink-100 text-ink-600 hover:bg-ink-200']">IDE 导入向导</button>
-        <div class="ml-auto flex items-center gap-2 text-[10px] text-ink-500">
+        <div class="ml-auto flex items-center gap-1.5 text-[10px] text-ink-500 flex-wrap">
           <span class="px-1.5 py-0.5 bg-brand-50 text-brand-600 rounded">LLM {{ selectedLlm.length }}</span>
           <span class="px-1.5 py-0.5 bg-brand-50 text-brand-600 rounded">MCP {{ selectedMcp.length }}</span>
           <span class="px-1.5 py-0.5 bg-brand-50 text-brand-600 rounded">Skill {{ selectedSkills.length }}</span>
+          <span class="px-1.5 py-0.5 bg-brand-50 text-brand-600 rounded">Agent {{ selectedSubagents.length }}</span>
+          <span class="px-1.5 py-0.5 bg-brand-50 text-brand-600 rounded">Rule {{ selectedRules.length }}</span>
+          <span class="px-1.5 py-0.5 bg-brand-50 text-brand-600 rounded">Cmd {{ selectedCommands.length }}</span>
+          <span v-if="hooksEnabled" class="px-1.5 py-0.5 bg-green-50 text-green-600 rounded">Hooks ✓</span>
         </div>
         <select v-model="selectedPluginFile" @change="loadExistingPlugin" class="px-2 py-1 text-[11px] border border-ink-300 rounded">
           <option value="">加载已有...</option>
@@ -49,7 +61,7 @@ const localLlmList = computed(() => {
         <button @click="newPlugin" class="text-[11px] text-brand-600 hover:underline">清空</button>
       </div>
     </div>
-    <div v-show="buildMode === 'local'" class="grid grid-cols-[1fr_1fr_1fr_300px] gap-3">
+    <div v-show="buildMode === 'local'" class="grid grid-cols-[1fr_1fr_1fr_1fr_1fr_300px] gap-3">
       <div class="bg-white rounded-xl shadow-card p-3 max-h-[72vh] overflow-y-auto">
         <h3 class="text-xs font-semibold mb-2 pb-2 border-b border-gray-100">本地 LLM <span class="text-[10px] text-ink-500 font-normal">({{ localLlmList.length }})</span></h3>
         <div v-if="!localLlmList.length" class="text-center text-ink-400 text-xs py-6">未配置 LLM Provider<br>请到 LLM 配置 tab 添加</div>
@@ -89,6 +101,36 @@ const localLlmList = computed(() => {
           </div>
         </div>
       </div>
+      <!-- Subagent -->
+      <div class="bg-white rounded-xl shadow-card p-3 max-h-[72vh] overflow-y-auto">
+        <h3 class="text-xs font-semibold mb-2 pb-2 border-b border-gray-100">Subagent <span class="text-[10px] text-ink-500 font-normal">({{ availableSubagents.length }})</span></h3>
+        <div v-if="!availableSubagents.length" class="text-center text-ink-400 text-xs py-6">无可用 Subagent</div>
+        <div class="space-y-1">
+          <div v-for="sa in availableSubagents" :key="sa.name" @click="toggleSubagent(sa.name)" :class="['p-1.5 border rounded-md cursor-pointer transition', selectedSubagents.includes(sa.name) ? 'border-brand-500 bg-brand-50' : 'border-ink-300 hover:border-brand-500']">
+            <div class="flex items-center gap-1"><input type="checkbox" :checked="selectedSubagents.includes(sa.name)" @click.stop="toggleSubagent(sa.name)" class="w-3 h-3 accent-brand-500"><span class="font-medium text-xs truncate">{{ sa.name }}</span></div>
+            <div class="text-[10px] text-ink-500 truncate">{{ sa.desc || sa.role }}</div>
+          </div>
+        </div>
+      </div>
+      <!-- Rules + Commands -->
+      <div class="bg-white rounded-xl shadow-card p-3 max-h-[72vh] overflow-y-auto">
+        <h3 class="text-xs font-semibold mb-2 pb-2 border-b border-gray-100">Rules <span class="text-[10px] text-ink-500 font-normal">({{ availableRules.length }})</span></h3>
+        <div v-if="!availableRules.length" class="text-center text-ink-400 text-xs py-3">无可用 Rule</div>
+        <div class="space-y-1 mb-3">
+          <div v-for="r in availableRules" :key="r.path" @click="toggleRule(r.path)" :class="['p-1.5 border rounded-md cursor-pointer transition', selectedRules.includes(r.path) ? 'border-brand-500 bg-brand-50' : 'border-ink-300 hover:border-brand-500']">
+            <div class="flex items-center gap-1"><input type="checkbox" :checked="selectedRules.includes(r.path)" @click.stop="toggleRule(r.path)" class="w-3 h-3 accent-brand-500"><span class="text-xs truncate">{{ r.path }}</span></div>
+            <div class="text-[10px] text-ink-500 truncate">{{ r.description }}</div>
+          </div>
+        </div>
+        <h3 class="text-xs font-semibold mb-2 pb-2 border-b border-gray-100">Commands <span class="text-[10px] text-ink-500 font-normal">({{ availableCommands.length }})</span></h3>
+        <div v-if="!availableCommands.length" class="text-center text-ink-400 text-xs py-3">无可用 Command</div>
+        <div class="space-y-1">
+          <div v-for="c in availableCommands" :key="c.name" @click="toggleCommand(c.name)" :class="['p-1.5 border rounded-md cursor-pointer transition', selectedCommands.includes(c.name) ? 'border-brand-500 bg-brand-50' : 'border-ink-300 hover:border-brand-500']">
+            <div class="flex items-center gap-1"><input type="checkbox" :checked="selectedCommands.includes(c.name)" @click.stop="toggleCommand(c.name)" class="w-3 h-3 accent-brand-500"><span class="font-medium text-xs truncate">{{ c.name }}</span></div>
+            <div class="text-[10px] text-ink-500 truncate">{{ c.description }}</div>
+          </div>
+        </div>
+      </div>
       <div class="bg-white rounded-xl shadow-card p-3 max-h-[72vh] overflow-y-auto">
         <h3 class="text-xs font-semibold mb-2 pb-2 border-b border-gray-100">插件定义</h3>
         <div class="space-y-1.5">
@@ -104,7 +146,14 @@ const localLlmList = computed(() => {
           <div class="text-[10px] text-ink-500">已选 MCP ({{ selectedMcp.length }})</div>
           <div class="border border-dashed border-ink-300 rounded p-1 min-h-[30px]"><span v-for="m in selectedMcp" :key="m" class="inline-block mr-1 mb-1 px-1.5 py-0.5 text-[10px] bg-brand-50 rounded">{{ m }}</span></div>
           <div class="text-[10px] text-ink-500">已选 Skill ({{ selectedSkills.length }})</div>
-          <div class="border border-dashed border-ink-300 rounded p-1 min-h-[30px] max-h-[120px] overflow-y-auto"><span v-for="s in selectedSkills" :key="s" class="inline-block mr-1 mb-1 px-1.5 py-0.5 text-[10px] bg-brand-50 rounded">{{ s }}</span></div>
+          <div class="border border-dashed border-ink-300 rounded p-1 min-h-[30px] max-h-[80px] overflow-y-auto"><span v-for="s in selectedSkills" :key="s" class="inline-block mr-1 mb-1 px-1.5 py-0.5 text-[10px] bg-brand-50 rounded">{{ s }}</span></div>
+          <div class="text-[10px] text-ink-500">已选 Agent ({{ selectedSubagents.length }})</div>
+          <div class="border border-dashed border-ink-300 rounded p-1 min-h-[30px] max-h-[80px] overflow-y-auto"><span v-for="s in selectedSubagents" :key="s" class="inline-block mr-1 mb-1 px-1.5 py-0.5 text-[10px] bg-brand-50 rounded">{{ s }}</span></div>
+          <div class="text-[10px] text-ink-500">已选 Rules ({{ selectedRules.length }})</div>
+          <div class="border border-dashed border-ink-300 rounded p-1 min-h-[30px] max-h-[80px] overflow-y-auto"><span v-for="r in selectedRules" :key="r" class="inline-block mr-1 mb-1 px-1.5 py-0.5 text-[10px] bg-brand-50 rounded">{{ r }}</span></div>
+          <div class="text-[10px] text-ink-500">已选 Cmd ({{ selectedCommands.length }})</div>
+          <div class="border border-dashed border-ink-300 rounded p-1 min-h-[30px] max-h-[60px] overflow-y-auto"><span v-for="c in selectedCommands" :key="c" class="inline-block mr-1 mb-1 px-1.5 py-0.5 text-[10px] bg-brand-50 rounded">{{ c }}</span></div>
+          <label class="flex items-center gap-1.5 text-[10px] text-ink-600 cursor-pointer mt-1"><input type="checkbox" v-model="hooksEnabled" class="w-3 h-3 accent-brand-500"> 打包 Hooks 配置</label>
         </div>
         <div class="flex gap-1 mt-3 flex-wrap">
           <button @click="previewPlugin" class="px-2 py-1 text-[11px] bg-brand-500 text-white rounded hover:bg-brand-600">预览</button>
@@ -193,12 +242,50 @@ const localLlmList = computed(() => {
             </div>
           </div>
         </div>
-        <div v-show="wizardStep === 4" class="space-y-3">
+        <div v-show="wizardStep === 4" class="space-y-2">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-semibold">Subagent <span class="text-[10px] text-ink-500 font-normal">({{ selectedSubagents.length }}/{{ availableSubagents.length }})</span></h3>
+          </div>
+          <div v-if="!availableSubagents.length" class="text-center text-ink-400 text-xs py-8">无可用 Subagent</div>
+          <div v-else class="grid grid-cols-2 gap-1.5 max-h-[55vh] overflow-y-auto">
+            <div v-for="sa in availableSubagents" :key="sa.name" @click="toggleSubagent(sa.name)" :class="['p-2 border rounded-md cursor-pointer transition', selectedSubagents.includes(sa.name) ? 'border-brand-500 bg-brand-50' : 'border-ink-300 hover:border-brand-500']">
+              <div class="flex items-center gap-1.5"><input type="checkbox" :checked="selectedSubagents.includes(sa.name)" @click.stop="toggleSubagent(sa.name)" class="accent-brand-500"><span class="font-medium text-xs">{{ sa.name }}</span></div>
+              <div class="text-[11px] text-ink-500 mt-0.5 line-clamp-2">{{ sa.desc || sa.role }}</div>
+            </div>
+          </div>
+        </div>
+        <div v-show="wizardStep === 5" class="space-y-2">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-semibold">Rules <span class="text-[10px] text-ink-500 font-normal">({{ selectedRules.length }}/{{ availableRules.length }})</span></h3>
+          </div>
+          <div v-if="!availableRules.length" class="text-center text-ink-400 text-xs py-4">无可用 Rule</div>
+          <div v-else class="grid grid-cols-2 gap-1.5 max-h-[25vh] overflow-y-auto">
+            <div v-for="r in availableRules" :key="r.path" @click="toggleRule(r.path)" :class="['p-2 border rounded-md cursor-pointer transition', selectedRules.includes(r.path) ? 'border-brand-500 bg-brand-50' : 'border-ink-300 hover:border-brand-500']">
+              <div class="flex items-center gap-1.5"><input type="checkbox" :checked="selectedRules.includes(r.path)" @click.stop="toggleRule(r.path)" class="accent-brand-500"><span class="font-medium text-xs truncate">{{ r.path }}</span></div>
+              <div class="text-[11px] text-ink-500 mt-0.5 line-clamp-2">{{ r.description }}</div>
+            </div>
+          </div>
+          <div class="flex items-center justify-between mt-2">
+            <h3 class="text-xs font-semibold">Commands <span class="text-[10px] text-ink-500 font-normal">({{ selectedCommands.length }}/{{ availableCommands.length }})</span></h3>
+          </div>
+          <div v-if="!availableCommands.length" class="text-center text-ink-400 text-xs py-4">无可用 Command</div>
+          <div v-else class="grid grid-cols-2 gap-1.5 max-h-[25vh] overflow-y-auto">
+            <div v-for="c in availableCommands" :key="c.name" @click="toggleCommand(c.name)" :class="['p-2 border rounded-md cursor-pointer transition', selectedCommands.includes(c.name) ? 'border-brand-500 bg-brand-50' : 'border-ink-300 hover:border-brand-500']">
+              <div class="flex items-center gap-1.5"><input type="checkbox" :checked="selectedCommands.includes(c.name)" @click.stop="toggleCommand(c.name)" class="accent-brand-500"><span class="font-medium text-xs">{{ c.name }}</span></div>
+              <div class="text-[11px] text-ink-500 mt-0.5 line-clamp-2">{{ c.description }}</div>
+            </div>
+          </div>
+          <label class="flex items-center gap-1.5 text-xs text-ink-600 cursor-pointer mt-2"><input type="checkbox" v-model="hooksEnabled" class="w-3.5 h-3.5 accent-brand-500"> 打包 Hooks 配置（config/hooks/hooks.json）</label>
+        </div>
+        <div v-show="wizardStep === 6" class="space-y-3">
           <h3 class="text-xs font-semibold">命名并生成插件</h3>
           <div class="grid grid-cols-3 gap-2 text-center">
             <div class="bg-brand-50 rounded-lg p-2"><div class="text-lg font-bold text-brand-600">{{ selectedLlm.length }}</div><div class="text-[10px] text-ink-500">LLM</div></div>
             <div class="bg-brand-50 rounded-lg p-2"><div class="text-lg font-bold text-brand-600">{{ selectedMcp.length }}</div><div class="text-[10px] text-ink-500">MCP</div></div>
             <div class="bg-brand-50 rounded-lg p-2"><div class="text-lg font-bold text-brand-600">{{ selectedSkills.length }}</div><div class="text-[10px] text-ink-500">Skills</div></div>
+            <div class="bg-brand-50 rounded-lg p-2"><div class="text-lg font-bold text-brand-600">{{ selectedSubagents.length }}</div><div class="text-[10px] text-ink-500">Agent</div></div>
+            <div class="bg-brand-50 rounded-lg p-2"><div class="text-lg font-bold text-brand-600">{{ selectedRules.length }}</div><div class="text-[10px] text-ink-500">Rules</div></div>
+            <div class="bg-brand-50 rounded-lg p-2"><div class="text-lg font-bold text-brand-600">{{ selectedCommands.length }}</div><div class="text-[10px] text-ink-500">Cmd</div></div>
           </div>
           <div class="space-y-2">
             <div class="flex items-center gap-2"><label class="text-[11px] text-ink-500 w-16">name *</label><input v-model="pluginForm.name" placeholder="my-plugin" class="flex-1 px-2 py-1 text-xs border border-ink-300 rounded"></div>

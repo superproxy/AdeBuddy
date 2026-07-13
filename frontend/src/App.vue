@@ -17,6 +17,7 @@ import PluginView from './views/PluginView.vue'
 import PluginBuildView from './views/PluginBuildView.vue'
 import RulesView from './views/RulesView.vue'
 import HooksView from './views/HooksView.vue'
+import MarketplaceView from './views/MarketplaceView.vue'
 import { useIdeStore } from './stores/ide'
 import { useEnvStore } from './stores/env'
 import { useMcpStore } from './stores/mcp'
@@ -26,13 +27,14 @@ import { useUiStore } from './stores/ui'
 const tab = ref('ide')
 const tabs = [
   { key: 'ide', label: 'AIDE 管理' },
+  { key: 'plugin', label: '插件配置' },
+  { key: 'plugin-build', label: '插件构建' },
+  { key: 'marketplace', label: '插件市场' },
   { key: 'env', label: 'LLM 配置' },
   { key: 'mcp', label: 'MCP 配置' },
   { key: 'skill', label: 'Skills 配置' },
   { key: 'command', label: '自定义命令' },
   { key: 'subagent', label: 'Subagent' },
-  { key: 'plugin', label: '插件配置' },
-  { key: 'plugin-build', label: '插件构建' },
   { key: 'rules', label: 'Rules' },
   { key: 'hooks', label: 'Hooks' },
 ]
@@ -44,7 +46,7 @@ const ui = useUiStore()
 const syncLayout = useSyncLayoutStore()
 const { placement, dockSize } = storeToRefs(syncLayout)
 
-const syncVisible = computed(() => tab.value !== 'plugin-build' && tab.value !== 'ide')
+const syncVisible = computed(() => tab.value !== 'plugin-build' && tab.value !== 'ide' && tab.value !== 'marketplace')
 
 /** 为停靠面板预留空间，避免遮挡主内容 */
 const mainStyle = computed(() => {
@@ -119,6 +121,7 @@ onBeforeUnmount(() => {
       <PluginBuildView v-else-if="tab === 'plugin-build'" />
       <RulesView v-else-if="tab === 'rules'" />
       <HooksView v-else-if="tab === 'hooks'" />
+      <MarketplaceView v-else-if="tab === 'marketplace'" />
     </main>
 
     <SyncBar :tab="tab" />

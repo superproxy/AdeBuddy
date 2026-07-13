@@ -5,7 +5,7 @@ import { usePluginStore } from '../stores/plugin'
 const plugin = usePluginStore()
 const { plugins, installingPlugin, selectedForExport } = storeToRefs(plugin)
 const { refreshPluginList, exportPlugin, onImportPluginFile, onTogglePlugin, editPlugin,
-  toggleSelectForExport, toggleSelectAllForExport, exportSelectedPlugins } = plugin
+  toggleSelectForExport, toggleSelectAllForExport, exportSelectedPlugins, publishToMarketplace } = plugin
 const inputRef = ref<HTMLInputElement | null>(null)
 // 导出下拉菜单状态
 const exportMenu = ref<string | null>(null)
@@ -80,6 +80,7 @@ onMounted(() => { refreshPluginList() })
               </button>
             </div>
           </div>
+          <button @click="publishToMarketplace(p.file)" class="text-[10px] text-green-600 hover:underline flex-shrink-0" title="发布完整智能体到本地市场">分享到市场</button>
           <button @click="editPlugin(p.file)" class="text-[10px] text-brand-600 hover:underline flex-shrink-0">编辑</button>
         </div>
         <div v-if="!plugins.length" class="text-center text-ink-500 text-xs py-6">暂无可用插件</div>

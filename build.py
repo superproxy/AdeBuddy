@@ -140,6 +140,58 @@ def write_version(version: str) -> None:
     info(f"版本信息已写入: {version_file.relative_to(PROJECT_ROOT)} (v{version})")
 
 
+def generate_icns() -> None:
+    """macOS: 从 app.png 生成 app.icns（如果 .icns 不存在）。
+
+    使用 iconutil + sips 生成多分辨率 .icns：
+      1. sips 生成各尺寸 png 到 .iconset/
+      2. iconutil --convert icns 生成 .icns
+    """
+    if sys.platform != "darwin":
+        return
+    icns_path = PROJECT_ROOT / "assets" / "app.icns"
+    png_path = PROJECT_ROOT / "assets" / "app.png"
+    if icns_path.exists():
+        info(f".icns 已存在: {icns_path.relative_to(PROJECT_ROOT)}")
+        return
+    if not png_path.exists():
+        info("assets/app.png 不存在，跳过 .icns 生成")
+        return
+
+    iconset_dir = PROJECT_ROOT / "assets" / "app.iconset"
+    if iconset_dir.exists():
+        shutil.rmtree(iconset_dir)
+    iconset_dir.mkdir(parents=True)
+
+    # 用 sips 生成各分辨率（macOS 内置工具）
+    sizes = [16, 32, 64, 128, 256, 512, 1024]
+    for sz in sizes:
+        # 普通分辨率
+        r = subprocess.run(
+            ["sips", "-z", str(sz), str(sz), str(png_path),
+             "--out", str(iconset_dir / f"icon_{sz}x{sz}.png")],
+            capture_output=True, text=True,
+        )
+        # @2x 高分辨率
+        sz2 = sz * 2
+        subprocess.run(
+            ["sips", "-z", str(sz2), str(sz2), str(png_path),
+             "--out", str(iconset_dir / f"icon_{sz}x{sz}@2x.png")],
+            capture_output=True, text=True,
+        )
+
+    # iconutil 转 .icns
+    r = subprocess.run(
+        ["iconutil", "-c", "icns", str(iconset_dir), "-o", str(icns_path)],
+        capture_output=True, text=True,
+    )
+    shutil.rmtree(iconset_dir, ignore_errors=True)
+    if r.returncode == 0 and icns_path.exists():
+        info(f".icns 已生成: {icns_path.relative_to(PROJECT_ROOT)}")
+    else:
+        info(f"iconutil 生成 .icns 失败: {r.stderr.strip()}，使用 .ico 回退")
+
+
 def run_pyinstaller(windowed: bool) -> None:
     # 使用 .spec 文件时，windowed 由 spec 内的 console=False 控制，
     # 不能再传 --windowed（PyInstaller 不允许 spec + --windowed 同时使用）
@@ -214,13 +266,17 @@ def report() -> None:
     print("========================================")
     plat = sys.platform
     if plat == "darwin":
+        app_bundle = DIST_DIR / "AdeBuddy.app"
         exe = DIST_DIR / "AdeBuddy" / "AdeBuddy"
-        print(f"  产物目录: dist/AdeBuddy/")
-        print(f"  可执行:  {exe.relative_to(PROJECT_ROOT)}")
-        dist_pkg = list(INSTALLER_OUT_DIR.glob("AdeBuddy-*-*.*")) if INSTALLER_OUT_DIR.exists() else []
-        if dist_pkg:
-            print(f"  分发包:  {dist_pkg[0].relative_to(PROJECT_ROOT)}")
+        if app_bundle.is_dir():
+            print(f"  App Bundle: {app_bundle.relative_to(PROJECT_ROOT)}")
         else:
+            print(f"  产物目录: dist/AdeBuddy/")
+        print(f"  可执行:  {exe.relative_to(PROJECT_ROOT)}")
+        dist_files = list(INSTALLER_OUT_DIR.glob("AdeBuddy-*-*")) if INSTALLER_OUT_DIR.exists() else []
+        for df in dist_files:
+            print(f"  分发包:  {df.relative_to(PROJECT_ROOT)}")
+        if not dist_files:
             print("  分发:    压缩 dist/AdeBuddy 为 .zip，或用 create-dmg 做 .dmg")
     elif plat == "win32":
         exe = DIST_DIR / "AdeBuddy" / "AdeBuddy.exe"
@@ -295,40 +351,108 @@ def _build_windows_installer(version: str) -> None:
 
 
 def _build_macos_dist(version: str) -> None:
-    """macOS: 优先 create-dmg 生成 .dmg，回退到 .zip"""
+    """macOS: 生成 .dmg（拖拽安装）+ .pkg（安装器）。
+
+    优先打包 dist/AdeBuddy.app（BUNDLE 产出），回退到 dist/AdeBuddy/（裸目录）。
+    """
     INSTALLER_OUT_DIR.mkdir(parents=True, exist_ok=True)
+    app_bundle = DIST_DIR / "AdeBuddy.app"
     app_dir = DIST_DIR / "AdeBuddy"
-    if not app_dir.is_dir():
-        fail(f"找不到产物目录: {app_dir}")
 
-    # 尝试用 create-dmg 生成 .dmg
+    # 确定打包源：优先 .app，回退到裸目录
+    if app_bundle.is_dir():
+        pkg_source = app_bundle
+        pkg_source_name = "AdeBuddy.app"
+        info("打包源: AdeBuddy.app (标准 .app bundle)")
+    elif app_dir.is_dir():
+        pkg_source = app_dir
+        pkg_source_name = "AdeBuddy"
+        info("打包源: AdeBuddy/ (裸目录，无 .app bundle)")
+    else:
+        fail(f"找不到产物: {app_bundle} 或 {app_dir}")
+
+    # 1. 生成 .dmg（拖拽安装）
+    _build_macos_dmg(version, pkg_source)
+
+    # 2. 生成 .pkg（安装器，自动安装到 /Applications）
+    _build_macos_pkg(version, pkg_source, pkg_source_name)
+
+    # 3. 回退：如果 .dmg 和 .pkg 都没成功，生成 .zip
+    dmg_files = list(INSTALLER_OUT_DIR.glob("AdeBuddy-*-macos.dmg"))
+    pkg_files = list(INSTALLER_OUT_DIR.glob("AdeBuddy-*-macos.pkg"))
+    if not dmg_files and not pkg_files:
+        _build_macos_zip(version, pkg_source_name)
+
+
+def _build_macos_dmg(version: str, app_path: Path) -> None:
+    """用 create-dmg 生成 .dmg（需要 .app bundle）。
+
+    未签名的 .app 也能生成 .dmg，但用户打开时需右键 → 打开。
+    """
     create_dmg = shutil.which("create-dmg")
-    if create_dmg:
-        dmg_name = f"AdeBuddy-{version}-macos.dmg"
-        dmg_path = INSTALLER_OUT_DIR / dmg_name
-        info(f"使用 create-dmg 生成 .dmg...")
-        # --no-internet-enable: 不添加 Internet Enable 属性
-        # --overwrite: 覆盖已有 dmg
-        cmd = [
-            create_dmg,
-            "--no-internet-enable",
-            "--overwrite",
-            "--app-name", "AdeBuddy",
-            str(dmg_path),
-            str(app_dir),
-        ]
-        rc = subprocess.call(cmd, cwd=str(PROJECT_ROOT))
-        if rc == 0 and dmg_path.is_file():
-            info(f"DMG 已生成: {dmg_path.relative_to(PROJECT_ROOT)}")
-            return
-        else:
-            info("create-dmg 失败，回退到 .zip")
+    if not create_dmg:
+        info("未安装 create-dmg，跳过 .dmg 生成（可 brew install create-dmg）")
+        return
 
-    # 回退：生成 .zip
+    dmg_name = f"AdeBuddy-{version}-macos.dmg"
+    dmg_path = INSTALLER_OUT_DIR / dmg_name
+    info(f"使用 create-dmg 生成 .dmg...")
+    cmd = [
+        create_dmg,
+        "--no-internet-enable",
+        "--overwrite",
+        "--skip-jenkins",  # 不检查 Jenkins（CI 环境）
+        "--volname", "AdeBuddy",
+        "--app-drop-link", "180", "200",  # 拖拽到 Applications 的快捷方式
+        "--icon", "AdeBuddy.app", "60", "200",  # .app 图标位置
+        str(dmg_path),
+        str(app_path.parent),  # 源目录（含 .app）
+    ]
+    rc = subprocess.call(cmd, cwd=str(PROJECT_ROOT))
+    if rc == 0 and dmg_path.is_file():
+        info(f"DMG 已生成: {dmg_path.relative_to(PROJECT_ROOT)}")
+    else:
+        info("create-dmg 失败，稍后尝试 .zip 回退")
+
+
+def _build_macos_pkg(version: str, app_path: Path, app_name: str) -> None:
+    """用 pkgbuild 生成 .pkg 安装器。
+
+    仅在打包源是 .app 时生效（pkgbuild --component 需要 .app）。
+    """
+    if not app_name.endswith(".app"):
+        info("打包源不是 .app bundle，跳过 .pkg 生成")
+        return
+
+    pkgbuild = shutil.which("pkgbuild")
+    if not pkgbuild:
+        info("未找到 pkgbuild（非 macOS 或 Xcode tools 未安装），跳过 .pkg 生成")
+        return
+
+    pkg_name = f"AdeBuddy-{version}-macos.pkg"
+    pkg_path = INSTALLER_OUT_DIR / pkg_name
+    info(f"使用 pkgbuild 生成 .pkg 安装器...")
+    cmd = [
+        pkgbuild,
+        "--component", str(app_path),
+        "--install-location", "/Applications",
+        "--identifier", "com.agentbuddy.app",
+        "--version", version,
+        str(pkg_path),
+    ]
+    rc = subprocess.call(cmd, cwd=str(PROJECT_ROOT))
+    if rc == 0 and pkg_path.is_file():
+        info(f"PKG 已生成: {pkg_path.relative_to(PROJECT_ROOT)}")
+    else:
+        info(f"pkgbuild 失败 (exit={rc})，跳过 .pkg")
+
+
+def _build_macos_zip(version: str, app_name: str) -> None:
+    """回退：生成 .zip。"""
     zip_name = f"AdeBuddy-{version}-macos.zip"
     zip_path = INSTALLER_OUT_DIR / zip_name
     info(f"生成 .zip: {zip_name}")
-    cmd = ["zip", "-r", "-y", str(zip_path), "AdeBuddy"]
+    cmd = ["zip", "-r", "-y", str(zip_path), app_name]
     rc = subprocess.call(cmd, cwd=str(DIST_DIR))
     if rc != 0:
         fail(f"zip 打包失败 (exit={rc})")
@@ -350,6 +474,7 @@ def main():
     info(f"平台: {sys.platform} | Python: {sys.version.split()[0]} | 版本: {args.version}")
     ensure_pyinstaller()
     write_version(args.version)
+    generate_icns()
     if args.clean:
         clean()
     run_pyinstaller(windowed=args.windowed)

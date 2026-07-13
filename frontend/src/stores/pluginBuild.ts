@@ -14,6 +14,8 @@ export const wizardSteps = [
   { title: 'LLM', desc: '选择要导入的 LLM Provider' },
   { title: 'MCP', desc: '选择要导入的 MCP 服务' },
   { title: 'Skills', desc: '选择要导入的技能' },
+  { title: 'Subagent', desc: '选择要打包的 Subagent 角色' },
+  { title: 'Rules/Cmd', desc: '选择 Rules 和 Commands，配置 Hooks' },
   { title: '命名生成', desc: '填写插件名称并生成' },
 ]
 
@@ -29,6 +31,16 @@ export const usePluginBuildStore = defineStore('pluginBuild', () => {
   const selectedSkills = ref<string[]>([])
   const selectedMcp = ref<string[]>([])
   const selectedLlm = ref<string[]>([])
+  // 新增：Subagent / Rules / Commands / Hooks
+  const selectedSubagents = ref<string[]>([])
+  const selectedRules = ref<string[]>([])
+  const selectedCommands = ref<string[]>([])
+  const hooksEnabled = ref(false)
+  // 源数据
+  const availableSubagents = ref<any[]>([])
+  const availableRules = ref<any[]>([])
+  const availableCommands = ref<any[]>([])
+
   const ideImport = ref<any>({})
   const ideImportStats = ref<any>(null)
   const importedIdeMcp = ref<string[]>([])
@@ -50,6 +62,18 @@ export const usePluginBuildStore = defineStore('pluginBuild', () => {
     const i = selectedLlm.value.indexOf(key)
     if (i >= 0) selectedLlm.value.splice(i, 1); else selectedLlm.value.push(key)
   }
+  function toggleSubagent(name: string) {
+    const i = selectedSubagents.value.indexOf(name)
+    if (i >= 0) selectedSubagents.value.splice(i, 1); else selectedSubagents.value.push(name)
+  }
+  function toggleRule(path: string) {
+    const i = selectedRules.value.indexOf(path)
+    if (i >= 0) selectedRules.value.splice(i, 1); else selectedRules.value.push(path)
+  }
+  function toggleCommand(name: string) {
+    const i = selectedCommands.value.indexOf(name)
+    if (i >= 0) selectedCommands.value.splice(i, 1); else selectedCommands.value.push(name)
+  }
   function llmKey(l: any) { return l.provider + '@' + l.protocol }
   function wizardNext() { if (wizardStep.value < wizardSteps.length - 1) wizardStep.value++ }
   function wizardPrev() { if (wizardStep.value > 0) wizardStep.value-- }
@@ -59,7 +83,20 @@ export const usePluginBuildStore = defineStore('pluginBuild', () => {
     pluginForm.name = ''; pluginForm.version = '1.0.0'; pluginForm.description = ''
     pluginForm.author = 'AdeBuddy'; pluginForm.install_script = ''
     selectedSkills.value = []; selectedMcp.value = []; selectedLlm.value = []
+    selectedSubagents.value = []; selectedRules.value = []; selectedCommands.value = []
+    hooksEnabled.value = false
     wizardStep.value = 0
+  }
+  /** 加载 Subagent / Rules / Commands 源数据（并行） */
+  async function loadBuildSources() {
+    const [saRes, rulesRes, cmdRes] = await Promise.all([
+      api<any>('/api/subagent'),
+      api<any>('/api/rules'),
+      api<any>('/api/cmd'),
+    ])
+    if (saRes.ok) availableSubagents.value = saRes.data?.subagents || []
+    if (rulesRes.ok) availableRules.value = rulesRes.data || []
+    if (cmdRes.ok) availableCommands.value = cmdRes.data?.commands || []
   }
   async function importFromIde() {
     if (importing.value) return
@@ -127,6 +164,10 @@ export const usePluginBuildStore = defineStore('pluginBuild', () => {
     selectedSkills.value = [...(d.skills || [])].map((s:any) => typeof s === 'string' ? s : s.name || s.skill || '')
     selectedMcp.value = Object.keys(d.mcpServers || {})
     selectedLlm.value = (d.llm || []).map((l:any) => l.provider + '@' + l.protocol)
+    selectedSubagents.value = [...(d.subagents || [])]
+    selectedRules.value = [...(d.rules || [])]
+    selectedCommands.value = [...(d.commands || [])]
+    hooksEnabled.value = !!d.hooks
     ui.toast('已加载: ' + d.name)
   }
   function buildPluginConfig() {
@@ -158,6 +199,10 @@ export const usePluginBuildStore = defineStore('pluginBuild', () => {
       description: pluginForm.description.trim(), author: pluginForm.author.trim() || 'AdeBuddy',
       mcpServers: Object.fromEntries(selectedMcp.value.map(n => [n, mcp.mcpTemplate.mcpServers[n]])),
       skills: skillsOut, llm: llmList,
+      subagents: selectedSubagents.value,
+      rules: selectedRules.value,
+      commands: selectedCommands.value,
+      hooks: hooksEnabled.value,
       scripts: pluginForm.install_script.trim() ? { install: pluginForm.install_script.trim() } : {},
     }
   }
@@ -187,9 +232,12 @@ export const usePluginBuildStore = defineStore('pluginBuild', () => {
   }
 
   return {
-    pluginForm, selectedSkills, selectedMcp, selectedLlm, ideImport, ideImportStats,
-    importedIdeMcp, importedIdeSkills, wizardStep, buildMode, mcpFilterText, importing,
-    toggleSkill, toggleMcp, toggleLlm, llmKey, wizardNext, wizardPrev, wizardGoto, newPlugin,
+    pluginForm, selectedSkills, selectedMcp, selectedLlm,
+    selectedSubagents, selectedRules, selectedCommands, hooksEnabled,
+    availableSubagents, availableRules, availableCommands,
+    ideImport, ideImportStats, importedIdeMcp, importedIdeSkills, wizardStep, buildMode, mcpFilterText, importing,
+    toggleSkill, toggleMcp, toggleLlm, toggleSubagent, toggleRule, toggleCommand,
+    llmKey, wizardNext, wizardPrev, wizardGoto, newPlugin, loadBuildSources,
     importFromIde, importAllIdeMcp, importAllIdeSkills, applyImportedMcp, applyImportedSkills, applyImportedLlm,
     loadExistingPlugin, buildPluginConfig, previewPlugin, savePluginFile, installPluginFile,
   }

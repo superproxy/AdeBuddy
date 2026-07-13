@@ -108,7 +108,13 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=os.path.join(SPECPATH, 'assets', 'app.ico') if os.path.isfile(os.path.join(SPECPATH, 'assets', 'app.ico')) else None,
+    icon=(
+        os.path.join(SPECPATH, 'assets', 'app.icns')
+        if os.path.isfile(os.path.join(SPECPATH, 'assets', 'app.icns'))
+        else os.path.join(SPECPATH, 'assets', 'app.ico')
+        if os.path.isfile(os.path.join(SPECPATH, 'assets', 'app.ico'))
+        else None
+    ),
 )
 coll = COLLECT(
     exe,
@@ -118,4 +124,24 @@ coll = COLLECT(
     upx=True,
     upx_exclude=[],
     name='AdeBuddy',
+)
+
+# macOS: 生成标准 .app bundle（BUNDLE 仅在 macOS 生效，Windows/Linux 自动忽略）
+app = BUNDLE(
+    coll,
+    name='AdeBuddy.app',
+    icon=(
+        os.path.join(SPECPATH, 'assets', 'app.icns')
+        if os.path.isfile(os.path.join(SPECPATH, 'assets', 'app.icns'))
+        else None
+    ),
+    bundle_identifier='com.agentbuddy.app',
+    info_plist={
+        'CFBundleName': 'AdeBuddy',
+        'CFBundleDisplayName': 'AdeBuddy',
+        'CFBundleShortVersionString': '1.0.0',
+        'CFBundleVersion': '1.0.0',
+        'NSHighResolutionCapable': True,
+        'LSMinimumSystemVersion': '10.13',
+    },
 )

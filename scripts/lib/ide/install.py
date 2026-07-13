@@ -56,7 +56,12 @@ IDE_INSTALL_META = {
     },
     "TraeSoloCN": {
         "cli_install": {"method": "manual", "url": "https://www.trae.cn"},
-        "app_install": {"method": "manual", "url": "https://www.trae.cn/download"},
+        "app_install": {
+            "method": "manual",
+            "url": "https://www.trae.cn/download",
+            "uninstall_cmd_mac": "rm -rf '/Applications/Trae Solo CN.app' ~/.trae-solo-cn ~/.traesolocn 2>/dev/null; true",
+            "uninstall_cmd_win": "rmdir /s /q \"%LOCALAPPDATA%\\Programs\\Trae Solo CN\" 2>nul & rmdir /s /q \"%USERPROFILE%\\.trae-solo-cn\" 2>nul & rmdir /s /q \"%USERPROFILE%\\.traesolocn\" 2>nul & exit /b 0",
+        },
         "homepage": "https://www.trae.cn",
     },
     "OpenCode": {
@@ -85,8 +90,13 @@ IDE_INSTALL_META = {
         "homepage": "",
     },
     "WorkBuddy": {
-        "cli_install": {"method": "npm", "package": "@anthropic-ai/claude-code"},
-        "app_install": {"method": "manual", "url": "https://github.com/workbuddy/workbuddy/releases"},
+        "cli_install": {"method": "manual", "url": "https://github.com/workbuddy/workbuddy/releases"},
+        "app_install": {
+            "method": "manual",
+            "url": "https://github.com/workbuddy/workbuddy/releases",
+            "uninstall_cmd_mac": "rm -rf /Applications/WorkBuddy.app ~/.workbuddy 2>/dev/null; true",
+            "uninstall_cmd_win": "rmdir /s /q \"%LOCALAPPDATA%\\WorkBuddy\" 2>nul & rmdir /s /q \"%USERPROFILE%\\.workbuddy\" 2>nul & exit /b 0",
+        },
         "homepage": "https://github.com/workbuddy/workbuddy",
     },
     "ZCode": {
@@ -286,6 +296,36 @@ def install_ide(ide_key: str, mode: str = "cli") -> dict:
             "message": f"Unsupported method: {method}", "cmd": "", "stdout": "", "stderr": ""}
 
 
+def _get_uninstall_cmd(install_meta: dict) -> str:
+    """按平台选择卸载命令。
+
+    支持的字段（按优先级）：
+      1. uninstall_cmd_mac / uninstall_cmd_win — 平台专用
+      2. uninstall_cmd — 通用（仅 macOS/Linux 下使用 bash 执行）
+    """
+    is_win = sys.platform == "win32"
+    if is_win:
+        cmd = install_meta.get("uninstall_cmd_win", "")
+        if cmd:
+            return cmd
+    else:
+        cmd = install_meta.get("uninstall_cmd_mac", "")
+        if cmd:
+            return cmd
+    return install_meta.get("uninstall_cmd", "")
+
+
+def _run_uninstall_cmd(cmd: str) -> dict:
+    """执行卸载命令（按平台选择 shell）。
+
+    macOS/Linux: bash -c '<cmd>'
+    Windows:     cmd /c '<cmd>'
+    """
+    if sys.platform == "win32":
+        return _run_cmd(["cmd", "/c", cmd], timeout=120)
+    return _run_cmd(["bash", "-c", cmd], timeout=120)
+
+
 def uninstall_ide(ide_key: str, mode: str = "cli") -> dict:
     """卸载 IDE。
 
@@ -313,10 +353,10 @@ def uninstall_ide(ide_key: str, mode: str = "cli") -> dict:
     package = install_meta.get("package", "")
 
     if method == "manual":
-        # manual 但配了 uninstall_cmd：执行自定义卸载命令（如 trae-cli 删符号链接+目录）
-        uninstall_cmd = install_meta.get("uninstall_cmd", "")
+        # manual 但配了 uninstall_cmd：按平台选择卸载命令
+        uninstall_cmd = _get_uninstall_cmd(install_meta)
         if uninstall_cmd:
-            r = _run_cmd(["bash", "-c", uninstall_cmd], timeout=120)
+            r = _run_uninstall_cmd(uninstall_cmd)
             return {
                 "ok": r["ok"], "ide": ide_key, "mode": mode, "method": "manual",
                 "message": "卸载成功" if r["ok"] else f"卸载失败 (exit={r['returncode']})",
@@ -346,9 +386,9 @@ def uninstall_ide(ide_key: str, mode: str = "cli") -> dict:
                     "stdout": r["stdout"][-2000:], "stderr": r["stderr"][-2000:],
                 }
         # brew 失败或无 brew，fallback uninstall_cmd
-        uninstall_cmd = install_meta.get("uninstall_cmd", "")
+        uninstall_cmd = _get_uninstall_cmd(install_meta)
         if uninstall_cmd:
-            r = _run_cmd(["bash", "-c", uninstall_cmd], timeout=120)
+            r = _run_uninstall_cmd(uninstall_cmd)
             return {
                 "ok": r["ok"], "ide": ide_key, "mode": mode, "method": "brew",
                 "message": "卸载成功" if r["ok"] else f"卸载失败 (exit={r['returncode']})",
@@ -393,7 +433,7 @@ def uninstall_ide(ide_key: str, mode: str = "cli") -> dict:
                     "stdout": r["stdout"][-2000:], "stderr": r["stderr"][-2000:],
                 }
         # npm uninstall 失败或二进制仍在，fallback uninstall_cmd
-        uninstall_cmd = install_meta.get("uninstall_cmd", "")
+        uninstall_cmd = _get_uninstall_cmd(install_meta)
         if uninstall_cmd:
             r2 = _run_cmd(["bash", "-c", uninstall_cmd], timeout=120)
             return {

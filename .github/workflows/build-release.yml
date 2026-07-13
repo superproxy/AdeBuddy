@@ -55,14 +55,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install flask pyyaml requests pywebview pyinstaller
 
-      - name: Build app + dist package
+      - name: Build app + .pkg + .dmg
         run: python build.py --clean --version ${{ steps.ver.outputs.version }}
+
+      - name: Verify macOS artifacts
+        shell: bash
+        run: |
+          echo "=== dist/ ==="
+          ls -la dist/
+          echo "=== dist/installer/ ==="
+          ls -la dist/installer/
+          echo "=== .app bundle ==="
+          ls -la dist/AdeBuddy.app/Contents/ 2>/dev/null || echo "(no .app)"
+          echo "=== Info.plist ==="
+          plutil -p dist/AdeBuddy.app/Contents/Info.plist 2>/dev/null || echo "(no Info.plist)"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos-dist
-          path: dist/installer/AdeBuddy-*
+          path: |
+            dist/installer/AdeBuddy-*.dmg
+            dist/installer/AdeBuddy-*.pkg
+            dist/installer/AdeBuddy-*.zip
 
   build-windows:
     runs-on: windows-latest
