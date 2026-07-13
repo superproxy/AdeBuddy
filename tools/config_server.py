@@ -2590,6 +2590,7 @@ def sync_subagent():
     支持 agent 的 IDE：
     - OpenCode: ~/.config/opencode/agents/<name>.md（frontmatter + body）
     - ZCode: ~/.zcode/agents/<name>.md（frontmatter + body）
+    - Trae/TraeCN/TraeSoloCN: ~/.trae-cn/agents/<name>.md（Trae frontmatter 格式）
     """
     import json as _json
     from pathlib import Path as _Path
@@ -2599,64 +2600,88 @@ def sync_subagent():
         subagents = data.get("subagents", []) if isinstance(data, dict) else []
         results = {}
 
-        def _write_agent_md(agents_dir: _Path, sa: dict) -> bool:
-            """将一个 subagent 写为 <name>.md（frontmatter + body），成功返回 True。"""
+        def _build_description(sa: dict) -> str:
+            """desc + role 拼为 description。"""
+            description = sa.get("desc", "").strip()
+            role = sa.get("role", "").strip()
+            if role and description:
+                return f"{description}（角色: {role}）"
+            elif role:
+                return f"角色: {role}"
+            return description
+
+        def _write_agent_md(agents_dir: _Path, sa: dict, fmt: str = "zcode") -> bool:
+            """将一个 subagent 写为 <name>.md（frontmatter + body），成功返回 True。
+
+            fmt:
+              - "zcode": ZCode/OpenCode 格式（color 字段 + tools 列表）
+              - "trae": Trae 格式（无 color，tools 为逗号分隔字符串）
+            """
             name = sa.get("name", "").strip()
             if not name:
                 return False
             safe_name = "".join(c for c in name if c.isalnum() or c in "-_")
             if not safe_name:
                 return False
-            # 字段映射：subagent.yaml → agent .md
-            #   name → name
-            #   desc → description（desc 为空时用 role）
-            #   role → 拼入 description（"角色: <role>"）
-            #   category → color（映射为 color 值）
-            #   prompt → md body
-            description = sa.get("desc", "").strip()
-            role = sa.get("role", "").strip()
-            if role and description:
-                description = f"{description}（角色: {role}）"
-            elif role:
-                description = f"角色: {role}"
-            category = sa.get("category", "").strip()
-            color_map = {"开发": "yellow", "产品": "blue", "通用": "green"}
-            color = color_map.get(category, "yellow")
+            description = _build_description(sa)
             prompt = sa.get("prompt", "").strip()
 
-            lines = [
-                "---",
-                f'name: "{safe_name}"',
-                f'description: "{description}"',
-                f'color: {color}',
-                "tools:",
-                "  - Read",
-                "  - Grep",
-                "  - Glob",
-                "  - Bash",
-                "  - Edit",
-                "  - Write",
-                "  - WebFetch",
-                "  - WebSearch",
-                "  - TodoWrite",
-                "---",
-                "",
-                prompt,
-                "",
-            ]
+            if fmt == "trae":
+                # Trae: 无 color，tools 为逗号分隔字符串
+                lines = [
+                    "---",
+                    f'name: "{safe_name}"',
+                    f'description: "{description}"',
+                    f'tools: "Read, Grep, Glob, Bash, Edit, Write, WebFetch, WebSearch, TodoWrite"',
+                    "---",
+                    "",
+                    prompt,
+                    "",
+                ]
+            else:
+                # ZCode/OpenCode: 有 color，tools 为列表
+                category = sa.get("category", "").strip()
+                color_map = {"开发": "yellow", "产品": "blue", "通用": "green"}
+                color = color_map.get(category, "yellow")
+                lines = [
+                    "---",
+                    f'name: "{safe_name}"',
+                    f'description: "{description}"',
+                    f'color: {color}',
+                    "tools:",
+                    "  - Read",
+                    "  - Grep",
+                    "  - Glob",
+                    "  - Bash",
+                    "  - Edit",
+                    "  - Write",
+                    "  - WebFetch",
+                    "  - WebSearch",
+                    "  - TodoWrite",
+                    "---",
+                    "",
+                    prompt,
+                    "",
+                ]
             agents_dir.mkdir(parents=True, exist_ok=True)
             (agents_dir / f"{safe_name}.md").write_text("\n".join(lines), encoding="utf-8")
             return True
 
         # OpenCode: ~/.config/opencode/agents/<name>.md
         oc_agents_dir = _Path.home() / ".config" / "opencode" / "agents"
-        oc_count = sum(1 for sa in subagents if _write_agent_md(oc_agents_dir, sa))
+        oc_count = sum(1 for sa in subagents if _write_agent_md(oc_agents_dir, sa, fmt="zcode"))
         results["OpenCode"] = oc_count
 
         # ZCode: ~/.zcode/agents/<name>.md
         zcode_agents_dir = _Path.home() / ".zcode" / "agents"
-        zcode_count = sum(1 for sa in subagents if _write_agent_md(zcode_agents_dir, sa))
+        zcode_count = sum(1 for sa in subagents if _write_agent_md(zcode_agents_dir, sa, fmt="zcode"))
         results["ZCode"] = zcode_count
+
+        # Trae 系列: ~/.trae-cn/agents/<name>.md（Trae frontmatter 格式）
+        # Trae / TraeCN / TraeSoloCN 共享 .trae-cn 全局目录
+        trae_agents_dir = _Path.home() / ".trae-cn" / "agents"
+        trae_count = sum(1 for sa in subagents if _write_agent_md(trae_agents_dir, sa, fmt="trae"))
+        results["TraeCN"] = trae_count
 
         return jsonify({"ok": True, "count": len(subagents), "results": results,
                         "message": f"已同步到 {', '.join(f'{k}({v})' for k,v in results.items())}"})
