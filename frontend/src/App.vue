@@ -15,6 +15,7 @@ import CommandView from './views/CommandView.vue'
 import SubagentView from './views/SubagentView.vue'
 import PluginView from './views/PluginView.vue'
 import PluginBuildView from './views/PluginBuildView.vue'
+import RulesView from './views/RulesView.vue'
 import { useIdeStore } from './stores/ide'
 import { useEnvStore } from './stores/env'
 import { useMcpStore } from './stores/mcp'
@@ -31,6 +32,7 @@ const tabs = [
   { key: 'subagent', label: 'Subagent' },
   { key: 'plugin', label: '插件配置' },
   { key: 'plugin-build', label: '插件构建' },
+  { key: 'rules', label: 'Rules' },
 ]
 
 const ide = useIdeStore()
@@ -113,6 +115,7 @@ onBeforeUnmount(() => {
       <SubagentView v-else-if="tab === 'subagent'" />
       <PluginView v-else-if="tab === 'plugin'" />
       <PluginBuildView v-else-if="tab === 'plugin-build'" />
+      <RulesView v-else-if="tab === 'rules'" />
     </main>
 
     <SyncBar :tab="tab" />

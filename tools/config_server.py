@@ -138,6 +138,9 @@ CMD_FILE = PROJECT_ROOT / "config" / "cmd" / "cmd.yaml"
 CMD_EXAMPLE = PROJECT_ROOT / "template" / "cmd" / "cmd.yaml"
 SUBAGENT_FILE = PROJECT_ROOT / "config" / "subagent" / "subagent.yaml"
 SUBAGENT_EXAMPLE = PROJECT_ROOT / "template" / "subagent" / "subagent.yaml"
+# Rules：config/rules/（用户编辑）+ template/rules/（内置预置）
+RULES_DIR = PROJECT_ROOT / "config" / "rules"
+RULES_TEMPLATE_DIR = PROJECT_ROOT / "template" / "rules"
 
 # env.yaml 中属于 llm.yaml 的顶层键（其余归 mcp.yaml 的只有 mcp）
 LLM_TOP_KEYS = ["llm", "embedding", "tts", "asr", "vision", "misc"]
@@ -165,6 +168,7 @@ def _ensure_config_dirs() -> None:
         PROJECT_ROOT / "config" / "skills",
         PROJECT_ROOT / "config" / "cmd",
         PROJECT_ROOT / "config" / "subagent",
+        PROJECT_ROOT / "config" / "rules",
         PROJECT_ROOT / "config" / "ide",
         PROJECT_ROOT / "config" / "ide" / "claude",
         PROJECT_ROOT / "config" / "ide" / "codex",
@@ -2429,6 +2433,306 @@ def _ensure_subagent_file() -> Path:
     else:
         SUBAGENT_FILE.write_text("subagents: []\n", encoding="utf-8")
     return SUBAGENT_FILE
+
+
+# ============================================================
+# Rules API（config/rules/ + template/rules/ 双目录，.md 文件 + frontmatter）
+# ============================================================
+def _parse_rule_frontmatter(content: str) -> dict:
+    """解析规则 .md 文件的 frontmatter，返回元信息 dict。"""
+    import re
+    meta = {"description": "", "alwaysApply": False, "globs": "", "scene": ""}
+    if not content.startswith("---"):
+        return meta
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return meta
+    fm_text = parts[1].strip()
+    for line in fm_text.split("\n"):
+        line = line.strip()
+        if ":" not in line:
+            continue
+        key, _, val = line.partition(":")
+        key = key.strip()
+        val = val.strip()
+        if key in ("description", "globs", "scene"):
+            meta[key] = val.strip('"').strip("'")
+        elif key == "alwaysApply":
+            meta[key] = val.lower() in ("true", "yes", "1")
+    return meta
+
+
+def _scan_rules_dir(base: Path, source_label: str) -> list:
+    """扫描 rules 目录（含子目录），返回规则列表。"""
+    import re
+    rules = []
+    if not base.exists():
+        return rules
+    for f in sorted(base.rglob("*.md")):
+        if f.name.startswith(".") or f.name == "README.md":
+            continue
+        try:
+            content = f.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        meta = _parse_rule_frontmatter(content)
+        rel = f.relative_to(base)
+        # category = 第一级子目录名（无子目录则为空）
+        parts = rel.parts
+        category = parts[0] if len(parts) > 1 else ""
+        name = f.stem  # 文件名（不含 .md）
+        rules.append({
+            "name": name,
+            "path": str(rel),
+            "category": category,
+            "description": meta["description"],
+            "alwaysApply": meta["alwaysApply"],
+            "globs": meta["globs"],
+            "scene": meta["scene"],
+            "source": source_label,
+            "size": f.stat().st_size,
+        })
+    return rules
+
+
+def _rules_search_dirs() -> list:
+    """返回 rules 搜索目录列表（config/rules/ 优先，template/rules/ 其次）。"""
+    dirs = []
+    if RULES_DIR.exists():
+        dirs.append((RULES_DIR, "config"))
+    if RULES_TEMPLATE_DIR.exists():
+        dirs.append((RULES_TEMPLATE_DIR, "template"))
+    return dirs
+
+
+def _resolve_rule_path(rel_path: str) -> Path | None:
+    """在 config/rules/ 和 template/rules/ 中查找规则文件。"""
+    for base, _ in _rules_search_dirs():
+        p = (base / rel_path).resolve()
+        try:
+            p.relative_to(base.resolve())
+        except ValueError:
+            continue
+        if p.exists() and p.is_file():
+            return p
+    return None
+
+
+@app.route("/api/rules", methods=["GET"])
+def list_rules():
+    """列出所有规则（合并 config/rules/ + template/rules/，按 path 去重，config 优先）。"""
+    all_rules = []
+    seen_paths = set()
+    for base, label in _rules_search_dirs():
+        for r in _scan_rules_dir(base, label):
+            if r["path"] in seen_paths:
+                continue
+            seen_paths.add(r["path"])
+            all_rules.append(r)
+    return jsonify({"ok": True, "data": all_rules, "count": len(all_rules)})
+
+
+@app.route("/api/rules/content", methods=["GET"])
+def get_rule_content():
+    """获取规则文件原始内容。Query: path=relative/path.md"""
+    rel = (request.args.get("path") or "").strip()
+    if not rel:
+        return jsonify({"ok": False, "error": "缺少 path 参数"}), 400
+    path = _resolve_rule_path(rel)
+    if path is None:
+        return jsonify({"ok": False, "error": "文件不存在"}), 404
+    try:
+        content = path.read_text(encoding="utf-8")
+        return jsonify({"ok": True, "content": content, "path": rel,
+                        "writable": RULES_DIR in path.parents or path.parent == RULES_DIR})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/rules/save", methods=["POST"])
+def save_rule():
+    """保存规则文件。Body: {path, content}。写入 config/rules/。"""
+    body = request.get_json(force=True)
+    rel = (body.get("path") or "").strip()
+    content = body.get("content") or ""
+    if not rel:
+        return jsonify({"ok": False, "error": "缺少 path 参数"}), 400
+    # 安全：路径不能含 .. 
+    if ".." in Path(rel).parts:
+        return jsonify({"ok": False, "error": "非法路径"}), 400
+    out_path = (RULES_DIR / rel).resolve()
+    try:
+        out_path.relative_to(RULES_DIR.resolve())
+    except ValueError:
+        return jsonify({"ok": False, "error": "非法路径"}), 400
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(content, encoding="utf-8")
+        return jsonify({"ok": True, "path": rel})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/rules", methods=["DELETE"])
+def delete_rule():
+    """删除规则文件（仅 config/rules/ 中的可删）。Query: path=xxx"""
+    rel = (request.args.get("path") or "").strip()
+    if not rel:
+        return jsonify({"ok": False, "error": "缺少 path 参数"}), 400
+    if ".." in Path(rel).parts:
+        return jsonify({"ok": False, "error": "非法路径"}), 400
+    target = (RULES_DIR / rel).resolve()
+    try:
+        target.relative_to(RULES_DIR.resolve())
+    except ValueError:
+        return jsonify({"ok": False, "error": "非法路径"}), 400
+    if not target.exists():
+        return jsonify({"ok": False, "error": "文件不存在（可能是 template 预置规则，不可删除）"}), 404
+    try:
+        target.unlink()
+        return jsonify({"ok": True, "path": rel})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/rules/sync", methods=["POST"])
+def sync_rules():
+    """同步 rules 到所有 IDE 的 rules 目录。
+
+    各 IDE 目标目录：
+    - TraeCN: ~/.trae-cn/rules/
+    - ZCode: ~/.zcode/rules/
+    - OpenCode: ~/.config/opencode/rules/
+    - Claude: .claude/rules/
+    - Cursor: .cursor/rules/
+    - Codex: .codex/rules/
+    - OpenClaw: .openclaw/rules/
+    - WorkBuddy: .workbuddy/rules/
+    """
+    from pathlib import Path as _Path
+    try:
+        # 收集所有规则文件（config 优先 + template 补充）
+        all_files: dict[str, Path] = {}  # rel_path -> Path
+        for base, _ in _rules_search_dirs():
+            for f in sorted(base.rglob("*.md")):
+                if f.name.startswith(".") or f.name == "README.md":
+                    continue
+                rel = str(f.relative_to(base))
+                if rel not in all_files:
+                    all_files[rel] = f
+
+        if not all_files:
+            return jsonify({"ok": False, "error": "没有规则文件可同步"}), 400
+
+        import shutil
+        targets = [
+            ("TraeCN", _Path.home() / ".trae-cn" / "rules"),
+            ("ZCode", _Path.home() / ".zcode" / "rules"),
+            ("OpenCode", _Path.home() / ".config" / "opencode" / "rules"),
+            ("Claude", PROJECT_ROOT / ".claude" / "rules"),
+            ("Cursor", PROJECT_ROOT / ".cursor" / "rules"),
+            ("Codex", PROJECT_ROOT / ".codex" / "rules"),
+            ("OpenClaw", PROJECT_ROOT / ".openclaw" / "rules"),
+            ("WorkBuddy", PROJECT_ROOT / ".workbuddy" / "rules"),
+        ]
+        results = {}
+        for ide_name, rules_dir in targets:
+            rules_dir.mkdir(parents=True, exist_ok=True)
+            # 清空旧规则（force 模式）
+            for old in rules_dir.glob("*.md"):
+                old.unlink()
+            # 复制所有规则文件，保留子目录结构
+            count = 0
+            for rel, src in all_files.items():
+                dst = rules_dir / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(src), str(dst))
+                count += 1
+            results[ide_name] = count
+        total_ides = len([v for v in results.values() if v > 0])
+        return jsonify({
+            "ok": True,
+            "count": len(all_files),
+            "results": results,
+            "message": f"已同步 {len(all_files)} 个规则到 {total_ides} 个 IDE",
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/rules/export", methods=["GET"])
+def export_rules():
+    """导出所有规则为 zip。"""
+    import io, zipfile
+    buf = io.BytesIO()
+    seen = set()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for base, _ in _rules_search_dirs():
+            for f in base.rglob("*.md"):
+                if f.name.startswith(".") or f.name == "README.md":
+                    continue
+                rel = str(f.relative_to(base))
+                if rel in seen:
+                    continue
+                seen.add(rel)
+                zf.write(f, arcname=rel)
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name="rules-export.zip",
+                     mimetype="application/zip")
+
+
+@app.route("/api/rules/import", methods=["POST"])
+def import_rules():
+    """导入规则 zip 或单个 .md 文件。multipart/form-data，file 字段。"""
+    from pathlib import Path as _Path
+    import shutil
+    uploaded = request.files.get("file")
+    if not uploaded:
+        return jsonify({"ok": False, "error": "缺少 file 字段"}), 400
+    fname = uploaded.filename or ""
+    overwrite = request.form.get("overwrite", "").lower() in ("true", "1", "yes")
+
+    if fname.lower().endswith(".zip"):
+        try:
+            buf = io.BytesIO(uploaded.read())
+            with zipfile.ZipFile(buf, "r") as zf:
+                imported = []
+                skipped = []
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    name = info.filename
+                    if "__MACOSX" in name or Path(name).name.startswith("."):
+                        continue
+                    if not name.endswith(".md"):
+                        continue
+                    dst = RULES_DIR / name
+                    if dst.exists() and not overwrite:
+                        skipped.append(name)
+                        continue
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    dst.write_bytes(zf.read(name))
+                    imported.append(name)
+            return jsonify({"ok": True, "imported": imported, "skipped": skipped,
+                            "count": len(imported)})
+        except zipfile.BadZipFile:
+            return jsonify({"ok": False, "error": "无效的 zip 文件"}), 400
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+    elif fname.endswith(".md"):
+        try:
+            content = uploaded.read().decode("utf-8")
+        except UnicodeDecodeError:
+            return jsonify({"ok": False, "error": "文件编码不是 UTF-8"}), 400
+        dst = RULES_DIR / fname
+        if dst.exists() and not overwrite:
+            return jsonify({"ok": False, "error": "exists",
+                            "msg": f"{fname} 已存在，是否覆盖？"}), 409
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(content, encoding="utf-8")
+        return jsonify({"ok": True, "imported": [fname], "count": 1})
+    else:
+        return jsonify({"ok": False, "error": "仅支持 .zip 或 .md 文件"}), 400
 
 
 @app.route("/api/subagent", methods=["GET"])

@@ -8,6 +8,7 @@ import { useUiStore } from '../stores/ui'
 import { useCmdStore } from '../stores/cmd'
 import { useSubagentStore } from '../stores/subagent'
 import { runSse } from '../api/sse'
+import { api } from '../api/client'
 
 const props = defineProps<{ tab: string }>()
 const sync = useSyncStore()
@@ -23,7 +24,7 @@ const { onIdeDragStart, onIdeDragOver, onIdeDrop, onIdeDragEnd } = sync
 
 type FilterMode = 'all' | 'selected' | 'cn'
 type ResizeEdge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
-type ScopeKind = 'init-ide' | 'cmd' | 'subagent'
+type ScopeKind = 'init-ide' | 'cmd' | 'subagent' | 'rules'
 const filterMode = ref<FilterMode>('all')
 const panelRef = ref<HTMLElement | null>(null)
 const collapsed = ref(false)
@@ -39,6 +40,7 @@ const SCOPE_META: Record<string, { key: string; label: string; kind: ScopeKind }
   command: { key: 'cmd', label: 'Command', kind: 'cmd' },
   subagent: { key: 'subagent', label: 'Subagent', kind: 'subagent' },
   plugin: { key: 'plugin', label: 'Plugin', kind: 'init-ide' },
+  rules: { key: 'rules', label: 'Rules', kind: 'rules' },
 }
 
 const currentScope = computed(() => SCOPE_META[props.tab] ?? null)
@@ -73,6 +75,7 @@ const actionHint = computed(() => {
   if (!currentScope.value) return '当前页不支持一键同步'
   if (currentScope.value.kind === 'cmd') return '将同步自定义命令到支持的 IDE'
   if (currentScope.value.kind === 'subagent') return '将同步 Subagent 到支持的 IDE'
+  if (currentScope.value.kind === 'rules') return '将同步 Rules 到支持的 IDE'
   return `个目标将接收当前 ${currentScope.value.label} 配置`
 })
 
@@ -87,7 +90,7 @@ const canSync = computed(() => {
 
 const execCountLabel = computed(() => {
   if (!currentScope.value) return '—'
-  if (currentScope.value.kind === 'cmd' || currentScope.value.kind === 'subagent') return '✓'
+  if (currentScope.value.kind === 'cmd' || currentScope.value.kind === 'subagent' || currentScope.value.kind === 'rules') return '✓'
   return String(syncTargetIdes.value.length)
 })
 
@@ -221,6 +224,12 @@ async function syncCurrentScope() {
       await cmdStore.syncToOpencode()
     } else if (meta.kind === 'subagent') {
       await subagentStore.syncToOpencode()
+    } else if (meta.kind === 'rules') {
+      const r = await api<{ ok: boolean; count?: number; message?: string; error?: string }>(
+        '/api/rules/sync', { method: 'POST' },
+      )
+      if (r.ok) ui.toast(r.message || `已同步 ${r.count} 个规则`)
+      else ui.toast('同步失败: ' + (r.error || ''), 'err')
     } else {
       for (const ide of syncTargetIdes.value) {
         await runSse(

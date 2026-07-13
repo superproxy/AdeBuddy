@@ -16,8 +16,16 @@ class ZCodeTarget(IdeTarget):
     name = "ZCode"
 
     def init_rules(self, source_rules: Path):
-        # ZCode 暂无 rules 目录配置（与 OpenCode 一致）
-        pass
+        """同步 rules 到 ~/.zcode/rules/。"""
+        from lib.mcp import copy_dir_safe
+        zcode_rules_dir = Path.home() / ".zcode" / "rules"
+        srcs = source_rules if isinstance(source_rules, list) else [source_rules]
+        srcs = [s for s in srcs if s.exists()]
+        if not srcs:
+            print(f"{COLOR_YELLOW}[!] No rules source dirs found{COLOR_RESET}")
+            return
+        for src in srcs:
+            copy_dir_safe(src, zcode_rules_dir, "~/.zcode/rules/", self.force)
 
     def init_mcp(self, source_mcp_file: Path):
         """同步 MCP 到 ~/.zcode/cli/config.json（mcp.servers 格式）。

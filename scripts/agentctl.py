@@ -162,7 +162,13 @@ def cmd_sync(args):
     targets = get_ide(ide_name, project_root=PROJECT_ROOT, force=args.force,
                       include_skills=include, scope=scope)
 
-    source_rules = PROJECT_ROOT / "agents" / "rules"
+    # rules 源（多源并集，与 skills 一致）:
+    #   1. config/rules/   - 用户编辑的规则（优先）
+    #   2. template/rules/ - 内置预置规则
+    source_rules = [PROJECT_ROOT / "config" / "rules"]
+    template_rules = PROJECT_ROOT / "template" / "rules"
+    if template_rules.exists():
+        source_rules.append(template_rules)
     source_mcp = PROJECT_ROOT / "config" / "mcp" / "mcp.json"
     mcp_yaml_file = PROJECT_ROOT / "config" / "mcp" / "mcp.yaml"
     plugins_dir = PROJECT_ROOT / "template" / "plugins"

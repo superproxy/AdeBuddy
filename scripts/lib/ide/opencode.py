@@ -16,8 +16,16 @@ class OpenCodeTarget(IdeTarget):
     name = "OpenCode"
 
     def init_rules(self, source_rules: Path):
-        # OpenCode 无 rules 目录配置（原 init_opencode 也未处理 rules）
-        pass
+        """同步 rules 到 ~/.config/opencode/rules/。"""
+        from lib.mcp import copy_dir_safe
+        oc_rules_dir = Path.home() / ".config" / "opencode" / "rules"
+        srcs = source_rules if isinstance(source_rules, list) else [source_rules]
+        srcs = [s for s in srcs if s.exists()]
+        if not srcs:
+            print(f"{COLOR_YELLOW}[!] No rules source dirs found{COLOR_RESET}")
+            return
+        for src in srcs:
+            copy_dir_safe(src, oc_rules_dir, "~/.config/opencode/rules/", self.force)
 
     def init_mcp(self, source_mcp_file: Path):
         # 优先从 config/ide/opencode/opencode.json 复制（由 generate 生成）
