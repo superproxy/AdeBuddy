@@ -61,3 +61,43 @@ def test_registry_install_hint_from_npm_package():
     assert "-y" in hint["args"]
     assert "@modelcontextprotocol/server-filesystem" in hint["args"]
     assert hint["env"]["API_KEY"] == "${API_KEY}"
+
+
+def test_modelscope_owner_name():
+    from lib.mcp_market import _modelscope_owner_name
+    assert _modelscope_owner_name("@modelcontextprotocol/github") == (
+        "modelcontextprotocol",
+        "github",
+    )
+    assert _modelscope_owner_name("YTGX123/search") == ("YTGX123", "search")
+
+
+def test_modelscope_parses_mcp_server_list(monkeypatch):
+    from lib import mcp_market as mm
+
+    class FakeResp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "success": True,
+                "data": {
+                    "mcp_server_list": [
+                        {
+                            "id": "@modelcontextprotocol/github",
+                            "name": "GitHub",
+                            "description": "GitHub MCP",
+                            "categories": ["version-control"],
+                        }
+                    ],
+                    "total_count": 1,
+                },
+            }
+
+    monkeypatch.setattr(mm.requests, "put", lambda *a, **k: FakeResp())
+    items = mm.ModelScopeClient().search("github", limit=5)
+    assert len(items) == 1
+    assert items[0]["source"] == "modelscope"
+    assert items[0]["owner"] == "modelcontextprotocol"
+    assert items[0]["name"] == "GitHub"

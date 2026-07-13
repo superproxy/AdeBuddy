@@ -44,15 +44,6 @@ const SCOPE_META: Record<string, { key: string; label: string; kind: ScopeKind }
 const currentScope = computed(() => SCOPE_META[props.tab] ?? null)
 const visible = computed(() => props.tab !== 'plugin-build' && props.tab !== 'ide')
 
-const scopeItems = [
-  { key: 'llm', label: 'LLM' },
-  { key: 'mcp', label: 'MCP' },
-  { key: 'skill', label: 'Skills' },
-  { key: 'cmd', label: '命令' },
-  { key: 'subagent', label: 'Subagent' },
-  { key: 'plugin', label: '插件' },
-]
-
 /** 「全部」= AIDE 管理页已检测到的已安装 IDE/CLI */
 const installedKeySet = computed(() => new Set(installedIdes.value.map((i) => i.key)))
 const installedIdeList = computed(() => {
@@ -686,23 +677,14 @@ onBeforeUnmount(() => {
                 </label>
               </div>
               <div class="scope-block" aria-label="当前同步范围">
-                <div class="scope-block__head">
-                  <span class="scope-block__label">同步范围</span>
-                  <span class="scope-block__hint">随当前页切换</span>
-                </div>
-                <div class="scope-rail" role="list">
-                  <div
-                    v-for="item in scopeItems"
-                    :key="item.key"
-                    role="listitem"
-                    class="scope-chip"
-                    :class="{ 'is-active': currentScope?.key === item.key }"
-                    :aria-current="currentScope?.key === item.key ? 'true' : undefined"
-                  >
-                    <span class="scope-chip__dot" aria-hidden="true" />
-                    <span class="scope-chip__name">{{ item.label }}</span>
-                    <span v-if="currentScope?.key === item.key" class="scope-chip__tag">当前页</span>
-                  </div>
+                <span class="scope-block__label">同步范围</span>
+                <div
+                  class="scope-now"
+                  :class="{ 'is-empty': !currentScope }"
+                  :title="currentScope ? `当前页：${currentScope.label}` : '当前页不支持同步'"
+                >
+                  <span class="scope-now__dot" aria-hidden="true" />
+                  <span class="scope-now__name">{{ currentScope?.label ?? '—' }}</span>
                 </div>
               </div>
             </div>
@@ -1290,21 +1272,15 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 3px rgba(22, 93, 255, 0.28);
 }
 
-/* —— 同步范围：状态轨，而非假 checkbox —— */
+/* —— 同步范围：仅展示当前页 —— */
 .scope-block {
   margin-top: auto;
   padding-top: 10px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.scope-block__head {
-  display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
 }
 
 .scope-block__label {
@@ -1313,80 +1289,54 @@ onBeforeUnmount(() => {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.45);
+  flex: none;
 }
 
-.scope-block__hint {
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.32);
-}
-
-.scope-rail {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 4px;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.28);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.scope-chip {
-  display: flex;
+.scope-now {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  padding: 0 8px 0 10px;
-  border-radius: 7px;
-  border: 1px solid transparent;
-  color: rgba(255, 255, 255, 0.38);
+  gap: 7px;
+  min-height: 28px;
+  padding: 0 10px 0 9px;
+  border-radius: 8px;
+  color: #fff;
+  background: rgba(22, 93, 255, 0.18);
+  border: 1px solid rgba(22, 93, 255, 0.4);
+  box-shadow: inset 3px 0 0 #165dff;
   transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
 }
 
-.scope-chip__dot {
+.scope-now__dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   flex: none;
-  background: rgba(255, 255, 255, 0.2);
-  box-shadow: none;
-  transition: background 160ms ease, box-shadow 160ms ease;
-}
-
-.scope-chip__name {
-  font-family: 'JetBrains Mono', Consolas, monospace;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.scope-chip__tag {
-  margin-left: auto;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  padding: 2px 6px;
-  border-radius: 999px;
-  color: #dbe8ff;
-  background: rgba(22, 93, 255, 0.35);
-  border: 1px solid rgba(22, 93, 255, 0.45);
-  white-space: nowrap;
-}
-
-.scope-chip.is-active {
-  color: #fff;
-  background: rgba(22, 93, 255, 0.18);
-  border-color: rgba(22, 93, 255, 0.4);
-  box-shadow: inset 3px 0 0 #165dff;
-}
-
-.scope-chip.is-active .scope-chip__dot {
   background: #165dff;
   box-shadow: 0 0 0 3px rgba(22, 93, 255, 0.28);
 }
 
+.scope-now__name {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.scope-now.is-empty {
+  color: rgba(255, 255, 255, 0.4);
+  background: rgba(0, 0, 0, 0.22);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+
+.scope-now.is-empty .scope-now__dot {
+  background: rgba(255, 255, 255, 0.25);
+  box-shadow: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .scope-chip,
-  .scope-chip__dot {
+  .scope-now {
     transition: none !important;
   }
 }

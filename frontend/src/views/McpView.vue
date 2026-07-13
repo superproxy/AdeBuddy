@@ -1,128 +1,842 @@
 <script setup lang="ts">
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useMcpStore } from '../stores/mcp'
+import { useMcpStore, MCP_SOURCE_ORDER, MCP_SOURCE_LABELS, PULSEMCP_DOCS_URL, PULSEMCP_API_URL, PULSEMCP_MAILTO, type McpSourceId } from '../stores/mcp'
+
 const mcp = useMcpStore()
-const { mcpTemplate, mcpConfigData, mcpTab, mcpMarketQ, mcpMarketResults, mcpSearched, mcpForm, editingMcp, editMcpForm, mcpEnabledCount } = storeToRefs(mcp)
-const { searchMcpMarket, getMcpDetail, addMarketMcpToTemplate, parsePastedMcp, addManualMcp, toggleAllMcp, saveMcpAll, syncMcpFull, startEditMcp, cancelEditMcp, saveEditMcp, generateMcpRuntime, toggleMcpDisabled, deleteMcpEntry, saveMcpConfig, addMcpConfigKey, deleteMcpConfigKey } = mcp
+const {
+  mcpTemplate, mcpConfigData, mcpTab, mcpMarketQ, mcpMarketResults, mcpSearched,
+  mcpMarketLoading, mcpMarketMeta, mcpMarketSources, pulseMcpConfigured,
+  mcpForm, editingMcp, editMcpForm,
+  listFilter, listQuery,
+  filteredServers, mcpEnabledCount, mcpDisabledCount, mcpKeyCount, mcpServerEntries,
+} = storeToRefs(mcp)
+const {
+  searchMcpMarket, toggleMarketSource, getMcpDetail, addMarketMcpToTemplate,
+  parsePastedMcp, addManualMcp, toggleAllMcp, saveMcpAll, syncMcpFull,
+  startEditMcp, cancelEditMcp, saveEditMcp, generateMcpRuntime,
+  toggleMcpDisabled, deleteMcpEntry, saveMcpConfig, addMcpConfigKey, deleteMcpConfigKey,
+  loadPulseMcpStatus,
+} = mcp
+
+type DrawerMode = 'add' | 'edit' | 'keys' | null
+const drawer = ref<DrawerMode>(null)
+const marketInput = ref<HTMLInputElement | null>(null)
+
+const drawerTitle = computed(() => {
+  if (drawer.value === 'add') return '添加 MCP'
+  if (drawer.value === 'edit') return editingMcp.value ? `编辑 · ${editingMcp.value}` : '编辑'
+  if (drawer.value === 'keys') return '密钥配置'
+  return ''
+})
+const drawerSub = computed(() => {
+  if (drawer.value === 'add') return '多源聚合搜索 · PulseMCP 需 API Key（默认关闭）'
+  if (drawer.value === 'keys') return '生成 mcp.json 时替换 ${KEY}'
+  return ''
+})
+
+const sourceMetaItems = computed(() => {
+  const sources = mcpMarketMeta.value?.sources || {}
+  return MCP_SOURCE_ORDER
+    .filter((src) => mcpMarketSources.value.includes(src) || sources[src])
+    .map((src) => {
+      const info = sources[src] || {}
+      return {
+        id: src,
+        label: info.label || MCP_SOURCE_LABELS[src],
+        count: info.count ?? 0,
+        error: info.error || '',
+      }
+    })
+})
+
+const SUGGESTS = ['filesystem', 'github', 'browser', '地图']
+
+async function openDrawer(mode: DrawerMode, editName?: string) {
+  if (mode === 'edit' && editName) startEditMcp(editName)
+  if (mode === 'add') {
+    mcpTab.value = 'market'
+    loadPulseMcpStatus()
+  }
+  drawer.value = mode
+  await nextTick()
+  if (mode === 'add') marketInput.value?.focus()
+}
+function closeDrawer() {
+  if (drawer.value === 'edit') cancelEditMcp()
+  drawer.value = null
+}
+async function saveEditAndClose() {
+  await saveEditMcp()
+  if (!editingMcp.value) drawer.value = null
+}
+async function addManualAndMaybeClose() {
+  const before = Object.keys(mcpTemplate.value.mcpServers || {}).length
+  await addManualMcp()
+  const after = Object.keys(mcpTemplate.value.mcpServers || {}).length
+  if (after > before) closeDrawer()
+}
+async function addFromMarket(item: any) {
+  await addMarketMcpToTemplate(item)
+}
+function suggestSearch(q: string) {
+  mcpMarketQ.value = q
+  searchMcpMarket()
+}
+function isSourceOn(src: McpSourceId) {
+  return mcpMarketSources.value.includes(src)
+}
+const pulseMcpEnabled = computed(() => mcpMarketSources.value.includes('pulsemcp'))
+async function confirmDeleteFromEdit() {
+  const name = editingMcp.value
+  if (!name) return
+  await deleteMcpEntry(name)
+  if (!mcpTemplate.value.mcpServers?.[name]) closeDrawer()
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && drawer.value) {
+    e.preventDefault()
+    closeDrawer()
+  }
+}
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  loadPulseMcpStatus()
+})
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
+
 <template>
-  <div class="space-y-4">
-    <div class="bg-white rounded-xl shadow-card p-5">
-      <div class="flex items-center justify-between mb-3 pb-3 border-b border-gray-100">
-        <div class="flex items-center gap-1">
-          <button @click="mcpTab = 'market'" :class="['px-3 py-1 text-xs font-medium rounded-t border-b-2 -mb-px', mcpTab === 'market' ? 'border-brand-500 text-brand-600' : 'border-transparent text-ink-500 hover:text-ink-700']">市场搜索</button>
-          <button @click="mcpTab = 'manual'" :class="['px-3 py-1 text-xs font-medium rounded-t border-b-2 -mb-px', mcpTab === 'manual' ? 'border-brand-500 text-brand-600' : 'border-transparent text-ink-500 hover:text-ink-700']">手动添加</button>
-        </div>
-        <span class="text-[10px] text-ink-500">{{ mcpTab === 'market' ? '多源聚合：Registry / Smithery / ModelScope / PulseMCP / Glama' : '填写表单或粘贴 Smithery 配置' }}</span>
+  <div class="mcp-page">
+    <div class="mcp-head flex flex-wrap items-start justify-between gap-4">
+      <div class="min-w-0">
+        <h1 class="text-[15px] font-semibold text-ink-900 m-0">MCP 配置</h1>
+        <p class="text-xs text-ink-500 mt-1 mb-0">集中管理 MCP 服务 · 快速添加、编辑、同步与密钥设置</p>
+  
       </div>
-      <div v-show="mcpTab === 'market'">
-        <div class="flex gap-2 mb-3">
-          <input v-model="mcpMarketQ" @keydown.enter="searchMcpMarket" placeholder="关键词，如：地图、搜索、文件..." class="flex-1 px-3 py-1.5 text-xs border border-ink-300 rounded-md">
-          <button @click="searchMcpMarket" class="px-4 py-1.5 text-xs bg-brand-500 text-white rounded-md hover:bg-brand-600">搜索</button>
+      <div class="btn-cluster">
+        <button type="button" class="btn btn-secondary" @click="openDrawer('keys')">
+          <svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+          密钥
+        </button>
+        <button type="button" class="btn btn-soft" @click="openDrawer('add')">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          添加 MCP
+        </button>
+        <span class="split" aria-hidden="true" />
+        <button type="button" class="btn btn-secondary" @click="generateMcpRuntime">
+          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M12 18v-6M9 15h6"/></svg>
+          生成 mcp.json
+        </button>
+        <button type="button" class="btn btn-primary" @click="syncMcpFull">
+          <svg viewBox="0 0 24 24"><path d="M12 2v10"/><path d="m8 8 4 4 4-4"/><path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
+          同步到 IDE
+        </button>
+      </div>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi brand"><b>{{ mcpServerEntries.length }}</b><span>已配置</span><em>模板中的服务总数</em></div>
+      <div class="kpi live"><b>{{ mcpEnabledCount }}</b><span>启用中</span><em>将写入 mcp.json</em></div>
+      <div class="kpi"><b>{{ mcpKeyCount }}</b><span>密钥</span><em>mcp.yaml · mcp</em></div>
+      <div class="kpi warn"><b>{{ mcpDisabledCount }}</b><span>已禁用</span><em>可随时重新启用</em></div>
+    </div>
+
+    <section class="panel">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <label class="search">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#86909c" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
+            <input v-model="listQuery" placeholder="筛选名称 / 命令 / 类型" />
+          </label>
+          <div class="seg" role="group" aria-label="启停筛选">
+            <button type="button" :class="{ on: listFilter === 'all' }" @click="listFilter = 'all'">全部</button>
+            <button type="button" :class="{ on: listFilter === 'on' }" @click="listFilter = 'on'">启用</button>
+            <button type="button" :class="{ on: listFilter === 'off' }" @click="listFilter = 'off'">禁用</button>
+          </div>
         </div>
-        <div class="grid grid-cols-2 gap-2">
-          <div v-for="s in mcpMarketResults" :key="(s.source || '') + ':' + s.id" class="border border-ink-300 rounded-md p-3 hover:border-brand-500 hover:shadow-sm transition">
-            <div class="flex justify-between items-start mb-1 gap-2">
-              <div class="font-medium text-sm truncate" :title="s.name">{{ s.name }}</div>
-              <div class="flex items-center gap-1 shrink-0">
-                <span class="px-1.5 py-0.5 text-[10px] bg-ink-100 text-ink-600 rounded">{{ s.source_label || s.source }}</span>
-                <span v-if="s.is_hosted" class="px-1.5 py-0.5 text-[10px] bg-green-50 text-green-600 rounded">Hosted</span>
+        <div class="btn-cluster">
+          <div class="btn-pair" role="group" aria-label="批量启停">
+            <button type="button" class="btn btn-ghost btn-sm" @click="toggleAllMcp(true)">
+              <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+              全选
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm" @click="toggleAllMcp(false)">
+              <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              全不选
+            </button>
+          </div>
+          <button type="button" class="btn btn-primary" @click="saveMcpAll()">
+            <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+            保存
+          </button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:72px">启用</th>
+              <th>服务</th>
+              <th style="width:100px">类型</th>
+              <th>命令 / URL</th>
+              <th style="width:90px">状态</th>
+              <th style="width:132px">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in filteredServers" :key="s.name" :class="{ disabled: !s.enabled }">
+              <td>
+                <button
+                  type="button"
+                  class="switch"
+                  :class="{ on: s.enabled }"
+                  :aria-label="(s.enabled ? '禁用' : '启用') + ' ' + s.name"
+                  @click="toggleMcpDisabled(s.name, !s.enabled)"
+                />
+              </td>
+              <td><div class="name">{{ s.name }}</div></td>
+              <td><span class="type-pill">{{ s.type }}</span></td>
+              <td><div class="cmd" :title="s.cmd">{{ s.cmd || '—' }}</div></td>
+              <td>
+                <span class="status" :class="s.enabled ? 'on' : 'off'"><i />{{ s.enabled ? '启用' : '禁用' }}</span>
+              </td>
+              <td>
+                <div class="ops">
+                  <button type="button" class="btn btn-soft btn-sm" @click="openDrawer('edit', s.name)">
+                    <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                    编辑
+                  </button>
+                  <button type="button" class="btn btn-danger btn-icon btn-sm" :aria-label="'删除 ' + s.name" title="删除" @click="deleteMcpEntry(s.name)">
+                    <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+            <tr v-if="!filteredServers.length">
+              <td colspan="6" class="empty-cell">
+                {{ mcpServerEntries.length ? '无匹配结果' : '暂无已配置 MCP，点击「添加 MCP」开始' }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="keys-bar">
+      <div>
+        <h2>密钥配置</h2>
+        <p>服务里的 <code v-pre>${KEY}</code> 占位符在生成时从此处替换。当前 {{ mcpKeyCount }} 个密钥。</p>
+      </div>
+      <button type="button" class="btn btn-soft" @click="openDrawer('keys')">
+        <svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+        管理密钥
+      </button>
+    </div>
+
+    <Teleport to="body">
+      <Transition name="mcp-drawer">
+        <div v-if="drawer" class="drawer-root">
+          <div class="drawer-overlay" @click="closeDrawer" />
+          <aside
+            class="drawer-panel"
+            :class="{ wide: drawer === 'add' }"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mcp-drawer-title"
+          >
+            <div class="drawer-h">
+              <div>
+                <h3 id="mcp-drawer-title">{{ drawerTitle }}</h3>
+                <p v-if="drawerSub" class="sub">{{ drawerSub }}</p>
               </div>
+              <button type="button" class="btn btn-icon btn-ghost" aria-label="关闭抽屉" @click="closeDrawer">
+                <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
             </div>
-            <div class="text-[11px] text-ink-500 mb-1 truncate" :title="s.id">{{ s.id }} · {{ s.author || s.owner || '-' }}</div>
-            <div class="text-xs text-ink-700 line-clamp-2 mb-2">{{ s.description }}</div>
-            <div class="flex gap-1">
-              <button @click="getMcpDetail(s)" class="px-2 py-1 text-[11px] bg-ink-100 rounded hover:bg-ink-300">查看配置</button>
-              <button @click="addMarketMcpToTemplate(s)" class="px-2 py-1 text-[11px] bg-brand-50 text-brand-600 rounded hover:bg-brand-100">添加到已配置</button>
+
+            <div class="drawer-b">
+              <template v-if="drawer === 'add'">
+                <div class="tabs">
+                  <button type="button" :class="{ on: mcpTab === 'market' }" @click="mcpTab = 'market'">市场搜索</button>
+                  <button type="button" :class="{ on: mcpTab === 'manual' }" @click="mcpTab = 'manual'">手动添加</button>
+                </div>
+
+                <div v-show="mcpTab === 'market'">
+                  <div class="agg-search">
+                    <input
+                      ref="marketInput"
+                      v-model="mcpMarketQ"
+                      placeholder="关键词，如：filesystem、github、地图…"
+                      @keydown.enter="searchMcpMarket"
+                    />
+                    <button type="button" class="btn btn-primary" :disabled="mcpMarketLoading" @click="searchMcpMarket">
+                      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
+                      搜索
+                    </button>
+                  </div>
+
+                  <div class="src-filters" role="group" aria-label="数据源过滤">
+                    <button
+                      v-for="src in MCP_SOURCE_ORDER"
+                      :key="src"
+                      type="button"
+                      class="src-chip"
+                      :class="{ on: isSourceOn(src), locked: src === 'pulsemcp' && !pulseMcpConfigured }"
+                      :data-src="src"
+                      :aria-pressed="isSourceOn(src)"
+                      :title="src === 'pulsemcp' ? (pulseMcpConfigured ? 'PulseMCP（已配置 API Key）' : 'PulseMCP 需 API Key，点击启用前会提示') : undefined"
+                      @click="toggleMarketSource(src)"
+                    >
+                      <span class="check" aria-hidden="true">
+                        <svg v-if="isSourceOn(src)" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>
+                      </span>
+                      {{ MCP_SOURCE_LABELS[src] }}
+                      <span v-if="src === 'pulsemcp'" class="key-badge" aria-hidden="true">Key</span>
+                    </button>
+                  </div>
+
+                  <div v-if="pulseMcpEnabled" class="pulse-tip" :class="{ ok: pulseMcpConfigured }">
+                    <div class="pulse-tip-text">
+                      <template v-if="pulseMcpConfigured">
+                        PulseMCP 已配置 API Key，将使用稳定的 v0.1 接口。
+                      </template>
+                      <template v-else>
+                        PulseMCP 需配置 <code>PULSEMCP_API_KEY</code>（可选 <code>PULSEMCP_TENANT_ID</code>）并重启应用；未配置时旧接口可能随机失败。
+                      </template>
+                    </div>
+                    <div class="pulse-tip-links">
+                      <a :href="PULSEMCP_DOCS_URL" target="_blank" rel="noopener noreferrer">API 文档</a>
+                      <a :href="PULSEMCP_API_URL" target="_blank" rel="noopener noreferrer">申请 / 了解</a>
+                      <a :href="PULSEMCP_MAILTO">邮件申请</a>
+                    </div>
+                  </div>
+
+                  <div v-if="mcpSearched && sourceMetaItems.length" class="src-meta">
+                    <span
+                      v-for="m in sourceMetaItems"
+                      :key="m.id"
+                      class="src-meta-item"
+                      :class="{ err: !!m.error }"
+                      :title="m.error || undefined"
+                    >
+                      {{ m.label }} · <span class="n">{{ m.error ? '失败' : m.count }}</span>
+                    </span>
+                  </div>
+
+                  <div class="agg-status">
+                    <template v-if="mcpMarketLoading"><span>正在并行查询各源…</span></template>
+                    <template v-else-if="mcpSearched">
+                      <span>共 <strong>{{ mcpMarketResults.length }}</strong> 条（已跨源去重）</span>
+                      <span>标签标明来源</span>
+                    </template>
+                    <template v-else>
+                      <span>并行检索已选市场；PulseMCP 默认关闭（需 Key）</span>
+                    </template>
+                  </div>
+
+                  <div v-if="mcpMarketLoading" class="m-loading">
+                    <div class="spinner" aria-hidden="true" />
+                    聚合搜索中…
+                  </div>
+                  <div v-else-if="!mcpSearched" class="m-hint">
+                    输入关键词，从多个 MCP 市场一次搜齐。<br />每条结果带<strong>来源标签</strong>。
+                    <div class="suggest-row">
+                      <button v-for="s in SUGGESTS" :key="s" type="button" class="suggest" @click="suggestSearch(s)">{{ s }}</button>
+                    </div>
+                  </div>
+                  <div v-else-if="!mcpMarketResults.length" class="m-empty">无结果。换个关键词，或调整上方数据源。</div>
+                  <div v-else class="m-list">
+                    <article
+                      v-for="s in mcpMarketResults"
+                      :key="(s.source || '') + ':' + s.id"
+                      class="m-card"
+                      :class="'src-' + String(s.source || '').toLowerCase()"
+                    >
+                      <div class="m-card-top">
+                        <h4 :title="s.name">{{ s.name }}</h4>
+                        <div class="m-tags">
+                          <span
+                            class="src-tag"
+                            :class="String(s.source || '').toLowerCase()"
+                            :title="'来源：' + (s.source_label || s.source)"
+                          >
+                            <span class="dot" aria-hidden="true" />
+                            {{ s.source_label || MCP_SOURCE_LABELS[s.source as McpSourceId] || s.source }}
+                          </span>
+                          <span v-if="s.is_hosted" class="host-tag">Hosted</span>
+                        </div>
+                      </div>
+                      <div class="meta" :title="[s.id, s.author || s.owner].filter(Boolean).join(' · ')">
+                        {{ [s.id, s.author || s.owner].filter(Boolean).join(' · ') || '—' }}
+                      </div>
+                      <p>{{ s.description || '暂无描述' }}</p>
+                      <div class="btn-cluster">
+                        <button type="button" class="btn btn-secondary btn-sm" @click="getMcpDetail(s)">
+                          <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+                          查看配置
+                        </button>
+                        <button type="button" class="btn btn-soft btn-sm" @click="addFromMarket(s)">
+                          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                          添加到已配置
+                        </button>
+                      </div>
+                    </article>
+                  </div>
+                </div>
+
+                <div v-show="mcpTab === 'manual'" class="manual-form">
+                  <div class="field"><label>name *</label><input v-model="mcpForm.name" placeholder="my-mcp" /></div>
+                  <div class="field">
+                    <label>type</label>
+                    <select v-model="mcpForm.type">
+                      <option value="">stdio（默认）</option>
+                      <option value="http">http</option>
+                      <option value="streamableHttp">streamableHttp</option>
+                    </select>
+                  </div>
+                  <div class="field"><label>command</label><input v-model="mcpForm.command" placeholder="npx" /></div>
+                  <div class="field"><label>args</label><input v-model="mcpForm.args" placeholder="-y, package" /></div>
+                  <div class="field full"><label>url</label><input v-model="mcpForm.url" placeholder="http 类型填写" /></div>
+                  <div class="field full"><label>headers</label><textarea v-model="mcpForm.headers" rows="2" placeholder='{"Authorization":"Bearer xxx"}' /></div>
+                  <div class="field full"><label>env</label><textarea v-model="mcpForm.env" rows="2" placeholder='{"API_KEY":"xxx"}' /></div>
+                  <div class="field full"><label>Smithery 粘贴</label><textarea v-model="mcpForm.paste" rows="3" placeholder="粘贴完整 MCP 配置 JSON，自动解析" /></div>
+                </div>
+              </template>
+
+              <template v-else-if="drawer === 'edit'">
+                <div class="field">
+                  <label>type</label>
+                  <select v-model="editMcpForm.type">
+                    <option value="">stdio</option>
+                    <option value="http">http</option>
+                    <option value="streamableHttp">streamableHttp</option>
+                  </select>
+                </div>
+                <div class="field"><label>command</label><input v-model="editMcpForm.command" /></div>
+                <div class="field"><label>args</label><input v-model="editMcpForm.args" placeholder="逗号分隔" /></div>
+                <div class="field"><label>url</label><input v-model="editMcpForm.url" /></div>
+                <div class="field"><label>headers</label><textarea v-model="editMcpForm.headers" rows="3" /></div>
+                <div class="field"><label>env</label><textarea v-model="editMcpForm.env" rows="3" /></div>
+                <div class="danger-zone">
+                  <button type="button" class="btn btn-danger-outline" @click="confirmDeleteFromEdit">
+                    <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                    删除此服务
+                  </button>
+                </div>
+              </template>
+
+              <template v-else-if="drawer === 'keys'">
+                <p class="keys-hint">MCP 服务密钥 / Token，生成 mcp.json 时替换 <code v-pre>${KEY}</code> 占位符。</p>
+                <div class="keys-list">
+                  <div v-for="(_, k) in (mcpConfigData.mcp || {})" :key="k" class="key-row">
+                    <code :title="String(k)">{{ k }}</code>
+                    <input v-model="mcpConfigData.mcp[k]" type="password" />
+                    <button type="button" class="btn btn-danger btn-icon btn-sm" :aria-label="'删除 ' + k" @click="deleteMcpConfigKey(String(k))">
+                      <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                    </button>
+                  </div>
+                  <div v-if="!mcpKeyCount" class="m-empty">暂无密钥，点击下方添加。</div>
+                </div>
+              </template>
             </div>
-          </div>
-          <div v-if="!mcpMarketResults.length && mcpSearched" class="col-span-2 text-center text-ink-500 py-6 text-xs">无结果</div>
-        </div>
-      </div>
-      <div v-show="mcpTab === 'manual'">
-        <div class="grid grid-cols-2 gap-3">
-          <div class="flex items-center gap-2"><label class="text-xs text-ink-500 w-20">name *</label><input v-model="mcpForm.name" placeholder="my-mcp" class="flex-1 px-2 py-1.5 text-xs border border-ink-300 rounded"></div>
-          <div class="flex items-center gap-2"><label class="text-xs text-ink-500 w-20">type</label>
-            <select v-model="mcpForm.type" class="flex-1 px-2 py-1.5 text-xs border border-ink-300 rounded"><option value="">stdio（默认）</option><option value="http">http</option><option value="streamableHttp">streamableHttp</option></select>
-          </div>
-          <div class="flex items-center gap-2"><label class="text-xs text-ink-500 w-20">command</label><input v-model="mcpForm.command" placeholder="npx" class="flex-1 px-2 py-1.5 text-xs border border-ink-300 rounded"></div>
-          <div class="flex items-center gap-2"><label class="text-xs text-ink-500 w-20">args</label><input v-model="mcpForm.args" placeholder="-y, @modelcontextprotocol/server-filesystem, ./" class="flex-1 px-2 py-1.5 text-xs border border-ink-300 rounded"></div>
-          <div class="flex items-center gap-2 col-span-2"><label class="text-xs text-ink-500 w-20">url</label><input v-model="mcpForm.url" placeholder="http 类型填写" class="flex-1 px-2 py-1.5 text-xs border border-ink-300 rounded"></div>
-          <div class="flex items-start gap-2 col-span-2"><label class="text-xs text-ink-500 w-20 mt-1.5">headers</label><textarea v-model="mcpForm.headers" rows="2" placeholder='{"Authorization":"Bearer xxx"}' class="flex-1 px-2 py-1.5 text-xs border border-ink-300 rounded font-mono"></textarea></div>
-          <div class="flex items-start gap-2 col-span-2"><label class="text-xs text-ink-500 w-20 mt-1.5">env</label><textarea v-model="mcpForm.env" rows="2" placeholder='{"API_KEY":"xxx"}' class="flex-1 px-2 py-1.5 text-xs border border-ink-300 rounded font-mono"></textarea></div>
-          <div class="flex items-start gap-2 col-span-2"><label class="text-xs text-ink-500 w-20 mt-1.5">Smithery 粘贴</label><textarea v-model="mcpForm.paste" rows="3" placeholder='粘贴完整 MCP 配置 JSON，自动解析' class="flex-1 px-2 py-1.5 text-xs border border-ink-300 rounded font-mono"></textarea></div>
-        </div>
-        <div class="flex gap-2 mt-3">
-          <button @click="parsePastedMcp" class="px-3 py-1.5 text-xs bg-ink-100 rounded hover:bg-ink-300">解析粘贴</button>
-          <button @click="addManualMcp" class="px-3 py-1.5 text-xs bg-brand-500 text-white rounded hover:bg-brand-600">添加到已配置</button>
-        </div>
-      </div>
-    </div>
-    <div class="bg-white rounded-xl shadow-card p-5">
-      <div class="flex items-center justify-between mb-3 pb-3 border-b border-gray-100">
-        <h2 class="text-sm font-semibold flex items-center gap-2">
-          <span class="w-1 h-4 bg-brand-500 rounded"></span>已配置
-          <span class="text-[10px] text-ink-500 font-normal">{{ Object.keys(mcpTemplate.mcpServers || {}).length }} 个 · 启用 {{ mcpEnabledCount }} · 密钥 {{ Object.keys(mcpConfigData.mcp || {}).length }} 个</span>
-        </h2>
-        <div class="flex gap-2 items-center">
-          <button @click="toggleAllMcp(true)" class="px-2 py-1.5 text-[11px] bg-ink-100 rounded hover:bg-ink-300">全选</button>
-          <button @click="toggleAllMcp(false)" class="px-2 py-1.5 text-[11px] bg-ink-100 rounded hover:bg-ink-300">全不选</button>
-          <button @click="saveMcpAll()" class="px-2 py-1.5 text-[11px] bg-brand-500 text-white rounded hover:bg-brand-600">保存</button>
-          <button @click="generateMcpRuntime" class="px-2 py-1.5 text-[11px] bg-ink-100 rounded hover:bg-ink-300">生成 mcp.json</button>
-          <button @click="syncMcpFull" class="px-2 py-1.5 text-[11px] bg-brand-50 text-brand-600 rounded hover:bg-brand-100">同步到 IDE</button>
-        </div>
-      </div>
-      <div class="space-y-2 mb-4">
-        <div v-for="(cfg, name) in (mcpTemplate.mcpServers || {})" :key="name"
-             :class="['border rounded-md p-2.5 transition', (cfg.disabled === true || cfg.disabled === 'true') ? 'border-ink-300 bg-ink-100/40 opacity-60' : 'border-brand-300 bg-brand-50/30']">
-          <div class="flex justify-between items-center">
-            <div class="flex items-center gap-2">
-              <input type="checkbox" :checked="!(cfg.disabled === true || cfg.disabled === 'true')" @change="toggleMcpDisabled(name, $event.target.checked)" class="w-4 h-4 accent-brand-500 cursor-pointer">
-              <div class="font-medium text-sm">{{ name }}</div>
-              <span v-if="cfg.disabled === true || cfg.disabled === 'true'" class="px-1 py-0.5 text-[10px] bg-ink-200 text-ink-500 rounded">已禁用</span>
-              <span v-else class="px-1 py-0.5 text-[10px] bg-green-50 text-green-600 rounded">启用</span>
+
+            <div class="drawer-f">
+              <template v-if="drawer === 'add' && mcpTab === 'market'">
+                <button type="button" class="btn btn-secondary" @click="closeDrawer">关闭</button>
+              </template>
+              <template v-else-if="drawer === 'add' && mcpTab === 'manual'">
+                <button type="button" class="btn btn-secondary" @click="parsePastedMcp">解析粘贴</button>
+                <button type="button" class="btn btn-primary" @click="addManualAndMaybeClose">
+                  <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                  添加到已配置
+                </button>
+              </template>
+              <template v-else-if="drawer === 'edit'">
+                <button type="button" class="btn btn-secondary" @click="closeDrawer">取消</button>
+                <button type="button" class="btn btn-primary" @click="saveEditAndClose">
+                  <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+                  保存更改
+                </button>
+              </template>
+              <template v-else-if="drawer === 'keys'">
+                <button type="button" class="btn btn-soft" @click="addMcpConfigKey">
+                  <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                  添加 Key
+                </button>
+                <button type="button" class="btn btn-primary" @click="saveMcpConfig">
+                  <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+                  保存
+                </button>
+              </template>
             </div>
-            <div class="flex items-center gap-1">
-              <button @click="startEditMcp(name)" class="text-[11px] text-brand-600 hover:bg-brand-50 px-1.5 py-0.5 rounded">编辑</button>
-              <button @click="deleteMcpEntry(name)" class="text-[11px] text-red-500 hover:bg-red-50 px-1.5 py-0.5 rounded">删</button>
-            </div>
-          </div>
-          <div class="text-[11px] text-ink-500 mt-0.5">{{ cfg.command ? cfg.command + ' ' + (cfg.args||[]).join(' ') : (cfg.url || '') }}</div>
-          <div v-if="editingMcp === name" class="mt-2 pt-2 border-t border-dashed border-ink-300 space-y-2">
-            <div class="grid grid-cols-2 gap-2">
-              <div class="flex items-center gap-1.5"><label class="text-[10px] text-ink-500 w-14">type</label><select v-model="editMcpForm.type" class="flex-1 px-1.5 py-1 text-[11px] border border-ink-300 rounded"><option value="">stdio</option><option value="http">http</option><option value="streamableHttp">streamableHttp</option></select></div>
-              <div class="flex items-center gap-1.5"><label class="text-[10px] text-ink-500 w-14">command</label><input v-model="editMcpForm.command" class="flex-1 px-1.5 py-1 text-[11px] border border-ink-300 rounded"></div>
-              <div class="flex items-center gap-1.5 col-span-2"><label class="text-[10px] text-ink-500 w-14">args</label><input v-model="editMcpForm.args" placeholder="逗号分隔" class="flex-1 px-1.5 py-1 text-[11px] border border-ink-300 rounded"></div>
-              <div class="flex items-center gap-1.5 col-span-2"><label class="text-[10px] text-ink-500 w-14">url</label><input v-model="editMcpForm.url" class="flex-1 px-1.5 py-1 text-[11px] border border-ink-300 rounded"></div>
-              <div class="flex items-start gap-1.5 col-span-2"><label class="text-[10px] text-ink-500 w-14 mt-1">headers</label><textarea v-model="editMcpForm.headers" rows="2" class="flex-1 px-1.5 py-1 text-[11px] border border-ink-300 rounded font-mono"></textarea></div>
-              <div class="flex items-start gap-1.5 col-span-2"><label class="text-[10px] text-ink-500 w-14 mt-1">env</label><textarea v-model="editMcpForm.env" rows="2" class="flex-1 px-1.5 py-1 text-[11px] border border-ink-300 rounded font-mono"></textarea></div>
-            </div>
-            <div class="flex gap-2">
-              <button @click="saveEditMcp" class="px-2.5 py-1 text-[11px] bg-brand-500 text-white rounded hover:bg-brand-600">保存</button>
-              <button @click="cancelEditMcp" class="px-2.5 py-1 text-[11px] bg-ink-100 rounded hover:bg-ink-300">取消</button>
-            </div>
-          </div>
+          </aside>
         </div>
-        <div v-if="!Object.keys(mcpTemplate.mcpServers || {}).length" class="text-center text-ink-500 text-xs py-4">暂无已配置 MCP，可上方通过市场搜索或手动添加</div>
-      </div>
-      <div class="border-t border-gray-100 pt-3">
-        <div class="flex items-center justify-between mb-2">
-          <h3 class="text-xs font-semibold text-ink-700">密钥配置 <span class="text-[10px] text-ink-500 font-normal">mcp.yaml · mcp</span></h3>
-          <div class="flex gap-2">
-            <button @click="saveMcpConfig" class="px-2 py-1 text-[11px] bg-brand-500 text-white rounded hover:bg-brand-600">保存</button>
-            <button @click="addMcpConfigKey" class="px-2 py-1 text-[11px] bg-brand-50 text-brand-600 rounded hover:bg-brand-100">+ 添加 Key</button>
-          </div>
-        </div>
-        <p class="text-[11px] text-ink-500 mb-3 leading-relaxed">MCP 服务的密钥/Token，供生成 mcp.json 时替换 ${KEY} 占位符。</p>
-        <div class="grid grid-cols-2 gap-3">
-          <div v-for="(_, k) in (mcpConfigData.mcp || {})" :key="k" class="flex items-center gap-2 group">
-            <label class="text-xs text-ink-500 w-44 truncate font-mono" :title="k">{{ k }}</label>
-            <input type="password" v-model="mcpConfigData.mcp[k]" class="flex-1 px-2 py-1.5 text-xs border border-ink-300 rounded font-mono">
-            <button @click="deleteMcpConfigKey(k)" class="opacity-0 group-hover:opacity-100 transition px-2 py-1 text-[11px] text-red-500 hover:bg-red-50 rounded">删</button>
-          </div>
-          <div v-if="!Object.keys(mcpConfigData.mcp || {}).length" class="col-span-2 text-center text-ink-500 text-xs py-4">暂无密钥，点击 "+ 添加 Key" 开始</div>
-        </div>
-      </div>
-    </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
+
+<style scoped>
+.mcp-page,
+.drawer-root {
+  --red: #f53f3f;
+  --red-bg: #ffece8;
+  --red-border: #f9c2c0;
+  --green: #00b42a;
+  --green-bg: #e8ffea;
+  --amber: #ff7d00;
+  --amber-bg: #fff7e8;
+  --purple: #722ed1;
+  --purple-bg: #f5e8ff;
+}
+.mcp-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-bottom: 12px;
+}
+.mcp-head { margin: 0; }
+
+.btn {
+  height: 34px; padding: 0 12px; border-radius: 8px; font-size: 12px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  white-space: nowrap; border: 1px solid transparent; cursor: pointer;
+  transition: background .18s ease, color .18s ease, border-color .18s ease;
+  background: none; color: inherit; user-select: none;
+}
+.btn svg { width: 14px; height: 14px; flex-shrink: 0; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-sm { height: 28px; padding: 0 10px; font-size: 11px; border-radius: 7px; }
+.btn-sm svg { width: 13px; height: 13px; }
+.btn-icon { width: 32px; padding: 0; }
+.btn-icon.btn-sm { width: 28px; }
+.btn-primary { background: #165dff; color: #fff; box-shadow: 0 1px 2px rgba(22,93,255,.22); }
+.btn-primary:hover:not(:disabled) { background: #0e42d2; }
+.btn-soft { background: #eef4ff; color: #0e42d2; border-color: #d9e6ff; }
+.btn-soft:hover:not(:disabled) { background: #d9e6ff; }
+.btn-secondary { background: #fff; color: #4e5969; border-color: #e5e6eb; }
+.btn-secondary:hover:not(:disabled) { background: #f7f8fa; border-color: #c9cdd4; }
+.btn-ghost { background: transparent; color: #4e5969; }
+.btn-ghost:hover:not(:disabled) { background: #f7f8fa; color: #1f2329; }
+.btn-danger { background: transparent; color: #86909c; }
+.btn-danger:hover:not(:disabled), .btn-danger:focus-visible { background: var(--red-bg); color: var(--red); border-color: var(--red-border); }
+.btn-danger-outline { background: #fff; color: var(--red); border-color: var(--red-border); }
+.btn-danger-outline:hover:not(:disabled) { background: var(--red-bg); }
+
+.btn-cluster { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn-cluster .split { width: 1px; height: 20px; background: #e5e6eb; margin: 0 2px; }
+.btn-pair {
+  display: inline-flex; border-radius: 8px; overflow: hidden;
+  border: 1px solid #e5e6eb; background: #fff;
+}
+.btn-pair .btn { border-radius: 0; border: none; height: 32px; border-right: 1px solid #e5e6eb; }
+.btn-pair .btn:last-child { border-right: none; }
+
+.kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.kpi {
+  background: #fff; border-radius: 12px; padding: 16px 18px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06);
+  border: 1px solid rgba(0,0,0,.03); position: relative; overflow: hidden;
+}
+.kpi::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: #c9cdd4; }
+.kpi.live::before { background: var(--green); }
+.kpi.warn::before { background: var(--amber); }
+.kpi.brand::before { background: #165dff; }
+.kpi b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; line-height: 1.1; color: #1f2329; }
+.kpi span { font-size: 12px; color: #86909c; }
+.kpi em { font-style: normal; font-size: 11px; color: #86909c; margin-top: 6px; display: block; }
+
+.panel {
+  background: #fff; border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06);
+  border: 1px solid rgba(0,0,0,.03); overflow: hidden;
+}
+.toolbar {
+  display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+  padding: 14px 18px; border-bottom: 1px solid #e5e6eb; align-items: center;
+}
+.toolbar-left { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.search {
+  display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px;
+  border: 1px solid #c9cdd4; border-radius: 8px; background: #fff; min-width: 220px;
+}
+.search input { border: none; outline: none; flex: 1; font-size: 12px; min-width: 0; background: transparent; }
+.seg { display: inline-flex; background: #f7f8fa; padding: 3px; border-radius: 8px; }
+.seg button {
+  height: 28px; padding: 0 10px; border-radius: 6px; font-size: 12px; font-weight: 600;
+  color: #86909c; border: none; background: transparent; cursor: pointer;
+}
+.seg button.on { background: #fff; color: #0e42d2; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+
+.table-wrap { max-height: min(560px, 62vh); overflow: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th {
+  text-align: left; font-size: 11px; font-weight: 600; color: #86909c; text-transform: uppercase;
+  letter-spacing: .04em; padding: 11px 18px; background: #f7f8fa; border-bottom: 1px solid #e5e6eb;
+  position: sticky; top: 0; z-index: 1;
+}
+td { padding: 13px 18px; border-bottom: 1px solid #f7f8fa; vertical-align: middle; }
+th:first-child, td:first-child { padding-left: 18px; }
+th:last-child, td:last-child { padding-right: 18px; }
+tr:hover td { background: #fafbfd; }
+tr.disabled td { opacity: .62; }
+.name { font-weight: 650; color: #1f2329; }
+.cmd {
+  font-family: 'JetBrains Mono', Consolas, monospace; font-size: 11px; color: #86909c;
+  max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.type-pill {
+  font-family: 'JetBrains Mono', Consolas, monospace; font-size: 10px; padding: 2px 7px; border-radius: 4px;
+  background: #f7f8fa; color: #4e5969; border: 1px solid #e5e6eb;
+}
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
+.status i { width: 7px; height: 7px; border-radius: 50%; background: #c9cdd4; display: inline-block; }
+.status.on { color: var(--green); }
+.status.on i { background: var(--green); box-shadow: 0 0 0 3px var(--green-bg); }
+.status.off { color: #86909c; }
+.switch {
+  width: 36px; height: 20px; border-radius: 999px; background: #c9cdd4; position: relative;
+  border: none; cursor: pointer; transition: background .2s; padding: 0;
+}
+.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; transition: transform .2s; box-shadow: 0 1px 2px rgba(0,0,0,.15);
+}
+.switch.on { background: #165dff; }
+.switch.on::after { transform: translateX(16px); }
+.ops { display: inline-flex; align-items: center; gap: 4px; padding: 2px; border-radius: 9px; }
+tr:hover .ops { background: #f7f8fa; }
+.ops .btn-soft { border-color: transparent; background: transparent; color: #0e42d2; }
+.ops .btn-soft:hover { background: #fff; border-color: #d9e6ff; }
+.empty-cell { text-align: center; color: #86909c; padding: 36px !important; }
+
+.keys-bar {
+  background: #fff; border-radius: 14px; padding: 16px 18px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06);
+  border: 1px solid rgba(0,0,0,.03);
+  display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap;
+}
+.keys-bar h2 { margin: 0 0 2px; font-size: 14px; color: #1f2329; }
+.keys-bar p { margin: 0; font-size: 12px; color: #86909c; }
+
+.drawer-root { position: fixed; inset: 0; z-index: 60; }
+.drawer-overlay { position: absolute; inset: 0; background: rgba(31,35,41,.36); }
+.drawer-panel {
+  position: absolute; top: 0; right: 0; width: min(440px, 100%); height: 100%; background: #fff;
+  box-shadow: -8px 0 32px rgba(0,0,0,.12); display: flex; flex-direction: column;
+}
+.drawer-panel.wide { width: min(560px, 100%); }
+.drawer-h {
+  padding: 18px 20px 16px; border-bottom: 1px solid #e5e6eb;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+}
+.drawer-h h3 { margin: 0 0 4px; font-size: 15px; font-weight: 650; color: #1f2329; }
+.drawer-h .sub { margin: 0; font-size: 12px; color: #86909c; line-height: 1.4; }
+.drawer-b { flex: 1; overflow: auto; padding: 18px 20px; }
+.drawer-f {
+  padding: 14px 20px; border-top: 1px solid #e5e6eb;
+  display: flex; gap: 8px; justify-content: flex-end; background: #f7f8fa;
+}
+
+.tabs { display: flex; gap: 4px; margin-bottom: 14px; background: #f7f8fa; padding: 3px; border-radius: 10px; }
+.tabs button {
+  flex: 1; height: 32px; border-radius: 8px; font-size: 12px; font-weight: 600;
+  color: #86909c; border: none; background: transparent; cursor: pointer;
+}
+.tabs button.on { background: #fff; color: #0e42d2; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+
+.agg-search { display: flex; gap: 8px; margin-bottom: 12px; }
+.agg-search input {
+  flex: 1; height: 40px; border: 1px solid #c9cdd4; border-radius: 10px; padding: 0 12px; font-size: 13px;
+}
+.agg-search .btn { height: 40px; padding: 0 14px; border-radius: 10px; }
+
+.src-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.src-chip {
+  height: 30px; padding: 0 12px 0 8px; border-radius: 999px; font-size: 12px; font-weight: 650;
+  border: 1.5px solid #e5e6eb; background: #fff; color: #86909c;
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  transition: background .15s ease, color .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+.src-chip .check {
+  width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0;
+  display: grid; place-items: center;
+  border: 1.5px solid #c9cdd4; background: #fff;
+  transition: background .15s ease, border-color .15s ease;
+}
+.src-chip .check svg {
+  width: 10px; height: 10px; stroke: #fff; fill: none; stroke-width: 3;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.src-chip:hover:not(.on) {
+  border-color: #c9cdd4; color: #4e5969; background: #f7f8fa;
+}
+/* 选中：实心填充 + 白字 + 勾选，一眼可辨 */
+.src-chip.on {
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(31, 35, 41, 0.12);
+}
+.src-chip.on .check {
+  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.22);
+}
+.src-chip[data-src="registry"].on { background: #165dff; border-color: #165dff; }
+.src-chip[data-src="smithery"].on { background: #722ed1; border-color: #722ed1; }
+.src-chip[data-src="modelscope"].on { background: #00b42a; border-color: #00b42a; }
+.src-chip[data-src="pulsemcp"].on { background: #ff7d00; border-color: #ff7d00; }
+.src-chip[data-src="glama"].on { background: #4e5969; border-color: #4e5969; }
+.src-chip.on:hover { filter: brightness(1.05); }
+.src-chip .key-badge {
+  font-size: 9px; font-weight: 800; letter-spacing: 0.02em;
+  padding: 1px 5px; border-radius: 999px; line-height: 1.2;
+  background: #fff7e8; color: #ff7d00; border: 1px solid #ffe0b3;
+}
+.src-chip.on .key-badge {
+  background: rgba(255,255,255,0.22); color: #fff; border-color: rgba(255,255,255,0.35);
+}
+.src-chip.locked:not(.on) { border-style: dashed; }
+
+.pulse-tip {
+  display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 12px;
+  margin: -4px 0 12px; padding: 10px 12px; border-radius: 10px;
+  background: #fff7e8; border: 1px solid #ffe0b3; color: #ad4e00;
+  font-size: 12px; line-height: 1.5;
+}
+.pulse-tip.ok {
+  background: #e8ffea; border-color: #b7f0c0; color: #008026;
+}
+.pulse-tip-text { flex: 1; min-width: 180px; }
+.pulse-tip-text code {
+  font-size: 11px; padding: 0 4px; border-radius: 4px;
+  background: rgba(0,0,0,0.06); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.pulse-tip-links { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pulse-tip-links a {
+  color: inherit; font-weight: 650; text-decoration: underline; text-underline-offset: 2px;
+}
+.pulse-tip-links a:hover { opacity: 0.85; }
+
+.src-meta {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px;
+  padding: 8px 10px; border-radius: 10px; background: #f7f8fa;
+}
+.src-meta-item {
+  font-size: 11px; color: #4e5969; display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 6px; background: #fff; border: 1px solid #e5e6eb;
+}
+.src-meta-item.err { color: var(--red); border-color: var(--red-border); background: var(--red-bg); }
+.src-meta-item .n { font-weight: 700; font-variant-numeric: tabular-nums; color: #1f2329; }
+.src-meta-item.err .n { color: var(--red); }
+.agg-status {
+  font-size: 12px; color: #86909c; margin-bottom: 10px;
+  display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+}
+.agg-status strong { color: #1f2329; font-weight: 650; }
+
+.m-list { display: grid; gap: 10px; }
+.m-card {
+  border: 1px solid #e5e6eb; border-radius: 12px; padding: 12px 12px 12px 14px;
+  position: relative; overflow: hidden; transition: border-color .15s, box-shadow .15s;
+}
+.m-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: #c9cdd4; }
+.m-card.src-registry::before { background: #165dff; }
+.m-card.src-smithery::before { background: #722ed1; }
+.m-card.src-modelscope::before { background: #00b42a; }
+.m-card.src-pulsemcp::before { background: #ff7d00; }
+.m-card.src-glama::before { background: #4e5969; }
+.m-card:hover { border-color: #d9e6ff; box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06); }
+.m-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+.m-card h4 { margin: 0; font-size: 13px; font-weight: 650; line-height: 1.3; min-width: 0; word-break: break-word; color: #1f2329; }
+.m-tags { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; flex-shrink: 0; }
+.src-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 999px;
+  border: 1px solid transparent; white-space: nowrap;
+}
+.src-tag .dot { width: 5px; height: 5px; border-radius: 50%; }
+.src-tag.registry { background: #eef4ff; color: #0e42d2; border-color: #d9e6ff; }
+.src-tag.registry .dot { background: #165dff; }
+.src-tag.smithery { background: #f5e8ff; color: #722ed1; border-color: #e6d0ff; }
+.src-tag.smithery .dot { background: #722ed1; }
+.src-tag.modelscope { background: #e8ffea; color: #00b42a; border-color: #b7ebc4; }
+.src-tag.modelscope .dot { background: #00b42a; }
+.src-tag.pulsemcp { background: #fff7e8; color: #ff7d00; border-color: #ffe0b3; }
+.src-tag.pulsemcp .dot { background: #ff7d00; }
+.src-tag.glama { background: #f7f8fa; color: #1f2329; border-color: #c9cdd4; }
+.src-tag.glama .dot { background: #4e5969; }
+.host-tag {
+  font-size: 10px; font-weight: 700; padding: 3px 7px; border-radius: 999px;
+  background: #e8ffea; color: #00b42a; border: 1px solid #b7ebc4;
+}
+.m-card .meta {
+  font-size: 11px; color: #86909c; margin-bottom: 6px;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.m-card p {
+  margin: 0 0 10px; font-size: 12px; color: #4e5969; line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.m-empty, .m-loading, .m-hint {
+  text-align: center; padding: 36px 16px; color: #86909c; font-size: 13px; line-height: 1.5;
+}
+.m-loading { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.spinner {
+  width: 22px; height: 22px; border: 2.5px solid #d9e6ff; border-top-color: #165dff;
+  border-radius: 50%; animation: mcp-spin .7s linear infinite;
+}
+@keyframes mcp-spin { to { transform: rotate(360deg); } }
+.suggest-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 12px; }
+.suggest {
+  height: 28px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: #fff; border: 1px solid #e5e6eb; color: #4e5969; cursor: pointer;
+}
+.suggest:hover { border-color: #d9e6ff; color: #0e42d2; background: #eef4ff; }
+
+.manual-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.manual-form .field { margin-bottom: 0; }
+.field.full, .manual-form .field.full { grid-column: 1 / -1; }
+.field label { font-size: 12px; font-weight: 600; color: #4e5969; }
+.field input, .field select, .field textarea {
+  width: 100%; border: 1px solid #c9cdd4; border-radius: 8px; padding: 9px 11px; font-size: 13px;
+  background: #fff; color: #1f2329;
+}
+.field textarea { font-family: 'JetBrains Mono', Consolas, monospace; resize: vertical; min-height: 72px; }
+.danger-zone { margin-top: 8px; padding-top: 14px; border-top: 1px solid #e5e6eb; }
+.keys-hint { margin: 0 0 14px; font-size: 12px; color: #86909c; line-height: 1.5; }
+.keys-list { display: grid; gap: 8px; }
+.key-row { display: grid; grid-template-columns: 140px 1fr auto; gap: 8px; align-items: center; }
+.key-row code {
+  font-family: 'JetBrains Mono', Consolas, monospace; font-size: 11px; color: #4e5969;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.key-row input {
+  height: 34px; border: 1px solid #c9cdd4; border-radius: 8px; padding: 0 10px;
+  font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px;
+}
+
+.mcp-drawer-enter-active, .mcp-drawer-leave-active { transition: opacity .2s ease; }
+.mcp-drawer-enter-active .drawer-panel, .mcp-drawer-leave-active .drawer-panel {
+  transition: transform .22s ease-out;
+}
+.mcp-drawer-enter-from, .mcp-drawer-leave-to { opacity: 0; }
+.mcp-drawer-enter-from .drawer-panel, .mcp-drawer-leave-to .drawer-panel { transform: translateX(100%); }
+
+@media (max-width: 900px) {
+  .kpis { grid-template-columns: 1fr 1fr; }
+  .cmd { max-width: 160px; }
+  .manual-form { grid-template-columns: 1fr; }
+  .key-row { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn, .switch, .switch::after, .spinner,
+  .mcp-drawer-enter-active, .mcp-drawer-leave-active,
+  .mcp-drawer-enter-active .drawer-panel, .mcp-drawer-leave-active .drawer-panel {
+    transition: none !important; animation: none !important;
+  }
+}
+</style>

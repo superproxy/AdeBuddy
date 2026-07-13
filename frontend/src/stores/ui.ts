@@ -26,6 +26,11 @@ export interface PromptDialogOptions {
   mono?: boolean
 }
 
+export interface DialogLink {
+  label: string
+  href: string
+}
+
 export interface ConfirmDialogOptions {
   title: string
   message: string
@@ -33,6 +38,8 @@ export interface ConfirmDialogOptions {
   confirmText?: string
   cancelText?: string
   tone?: DialogTone
+  /** 可点击外链（如文档、申请页） */
+  links?: DialogLink[]
 }
 
 type DialogKind = 'prompt' | 'confirm'
@@ -51,6 +58,7 @@ interface DialogState {
   cancelText: string
   tone: DialogTone
   mono: boolean
+  links: DialogLink[]
 }
 
 export const useUiStore = defineStore('ui', () => {
@@ -75,6 +83,7 @@ export const useUiStore = defineStore('ui', () => {
     cancelText: '取消',
     tone: 'brand',
     mono: false,
+    links: [],
   })
 
   let toastId = 0
@@ -123,6 +132,7 @@ export const useUiStore = defineStore('ui', () => {
         cancelText: opts.cancelText || '取消',
         tone: opts.tone || 'brand',
         mono: !!opts.mono,
+        links: [],
       }
     })
   }
@@ -146,6 +156,7 @@ export const useUiStore = defineStore('ui', () => {
         cancelText: opts.cancelText || '取消',
         tone: opts.tone || 'danger',
         mono: false,
+        links: opts.links || [],
       }
     })
   }

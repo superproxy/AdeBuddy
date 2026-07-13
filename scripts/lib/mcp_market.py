@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import requests
 
 HTTP_TIMEOUT = 12
-# PulseMCP 对自定义 UA 返回 410，沿用常见客户端标识
+# PulseMCP 对部分 UA / 并行请求不稳定，使用浏览器式 UA
 USER_AGENT = "AdeBuddy/1.0"
 HEADERS = {"User-Agent": USER_AGENT, "Accept": "application/json"}
 
@@ -27,7 +27,9 @@ MODELSCOPE_LIST_API = "https://www.modelscope.cn/openapi/v1/mcp/servers"
 MODELSCOPE_DETAIL_API = "https://www.modelscope.cn/openapi/v1/mcp/servers/{owner}/{name}"
 REGISTRY_BASE = "https://registry.modelcontextprotocol.io"
 SMITHERY_BASE = "https://api.smithery.ai"
-PULSEMCP_BASE = "https://api.pulsemcp.com/v0beta"
+# PulseMCP：v0beta 正在日落（随机 410 API_SUNSET）；正式接口为 v0.1（需 API Key）
+PULSEMCP_V01_BASE = "https://api.pulsemcp.com/v0.1"
+PULSEMCP_V0BETA_BASE = "https://api.pulsemcp.com/v0beta"
 GLAMA_BASE = "https://glama.ai/api/mcp/v1"
 
 # 搜索优先级：官方 > 主流市场 > 社区
@@ -146,25 +148,44 @@ class ModelScopeClient:
         resp.raise_for_status()
         payload = resp.json()
         data = payload.get("data") or payload
-        servers = data.get("servers") or data.get("list") or []
+        # ModelScope 实际字段为 mcp_server_list（兼容旧 servers/list）
+        servers = (
+            data.get("mcp_server_list")
+            or data.get("servers")
+            or data.get("list")
+            or []
+        )
         out = []
         for s in servers[:limit]:
-            sid = s.get("id") or s.get("mcp_server_id") or ""
-            owner = ""
-            name = s.get("name") or s.get("en_name") or ""
-            if isinstance(sid, str) and sid.startswith("@") and "/" in sid:
-                owner = sid[1:].split("/", 1)[0]
-                if not name:
-                    name = sid.split("/", 1)[-1]
+            sid = str(s.get("id") or s.get("mcp_server_id") or "")
+            owner, server_name = _modelscope_owner_name(sid)
+            locales = s.get("locales") or {}
+            en = locales.get("en") or {}
+            zh = locales.get("zh") or {}
+            name = (
+                s.get("name")
+                or s.get("chinese_name")
+                or zh.get("name")
+                or en.get("name")
+                or server_name
+                or sid
+            )
+            description = (
+                s.get("description")
+                or s.get("chinese_description")
+                or zh.get("description")
+                or en.get("description")
+                or ""
+            )
             out.append(_result(
                 source="modelscope",
-                id=sid or f"@{owner}/{name}",
-                name=name or sid,
+                id=sid or f"@{owner}/{server_name}",
+                name=name,
                 owner=owner,
-                author=s.get("author") or owner,
-                description=s.get("description") or s.get("chinese_description") or "",
+                author=s.get("author") or s.get("publisher") or owner,
+                description=description,
                 is_hosted=bool(s.get("is_hosted", False)),
-                categories=s.get("categories") or [],
+                categories=s.get("categories") or s.get("tags") or [],
                 raw=s,
             ))
         return out
@@ -180,6 +201,22 @@ class ModelScopeClient:
         resp.raise_for_status()
         payload = resp.json()
         return payload.get("data") or payload
+
+
+def _modelscope_owner_name(sid: str) -> Tuple[str, str]:
+    """从 ModelScope id 解析 owner/name。
+
+    支持：
+      @modelcontextprotocol/github
+      YTGX123/search
+    """
+    s = (sid or "").strip()
+    if s.startswith("@"):
+        s = s[1:]
+    if "/" in s:
+        owner, name = s.split("/", 1)
+        return owner, name
+    return "", s
 
 
 class RegistryClient:
@@ -327,20 +364,105 @@ def _smithery_install_hint(detail: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 class PulseMCPClient:
+    """PulseMCP 搜索客户端。
+
+    - 优先：v0.1（需环境变量 PULSEMCP_API_KEY，可选 PULSEMCP_TENANT_ID）
+    - 回退：v0beta（正在日落，会随机 410/API_SUNSET，加重试）
+    """
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+    ):
+        import os
+        self.api_key = (api_key if api_key is not None else os.environ.get("PULSEMCP_API_KEY", "")).strip()
+        self.tenant_id = (
+            tenant_id if tenant_id is not None else os.environ.get("PULSEMCP_TENANT_ID", "")
+        ).strip()
+
     def search(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+        if self.api_key:
+            return self._search_v01(query, limit)
+        return self._search_v0beta(query, limit)
+
+    def _search_v01(self, query: str, limit: int) -> List[Dict[str, Any]]:
+        headers = {
+            **HEADERS,
+            "X-API-Key": self.api_key,
+            "Content-Type": "application/json",
+        }
+        if self.tenant_id:
+            headers["X-Tenant-ID"] = self.tenant_id
+        resp = requests.get(
+            f"{PULSEMCP_V01_BASE}/servers",
+            params={
+                "search": query,
+                "limit": str(max(1, min(limit, 100))),
+                "version": "latest",
+            },
+            headers=headers,
+            timeout=HTTP_TIMEOUT,
+        )
+        if resp.status_code in (401, 403):
+            raise RuntimeError(
+                "PulseMCP v0.1 需要有效 API Key（环境变量 PULSEMCP_API_KEY / PULSEMCP_TENANT_ID）。"
+                "申请：hello@pulsemcp.com · 文档：https://www.pulsemcp.com/api/docs/v0.1"
+            )
+        resp.raise_for_status()
+        servers = resp.json().get("servers") or []
+        return [self._map_v01_entry(entry) for entry in servers[:limit]]
+
+    def _map_v01_entry(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        server = entry.get("server") or entry
+        name = server.get("name") or ""
+        title = server.get("title") or (name.split("/")[-1] if "/" in name else name)
+        repo = ((server.get("repository") or {}).get("url") or "")
+        packages = server.get("packages") or []
+        pkg_name = (packages[0].get("identifier") if packages else "") or ""
+        remotes = server.get("remotes") or []
+        hint = _registry_install_hint(server)
+        return _result(
+            source="pulsemcp",
+            id=name or title,
+            name=title or name,
+            owner=name.split("/")[0] if "/" in name else "",
+            description=server.get("description") or "",
+            homepage=server.get("websiteUrl") or "",
+            repo_url=repo,
+            package_name=pkg_name,
+            is_hosted=bool(remotes),
+            install_hint=hint,
+            raw=entry,
+        )
+
+    def _search_v0beta(self, query: str, limit: int) -> List[Dict[str, Any]]:
+        import time
+
+        last_err: Optional[str] = None
         resp = None
-        for attempt in range(2):
+        # v0beta 日落期按比例随机 410；多试几次通常能过（2026-09 将 100% 失败）
+        for attempt in range(6):
             resp = requests.get(
-                f"{PULSEMCP_BASE}/servers",
+                f"{PULSEMCP_V0BETA_BASE}/servers",
                 params={"query": query, "count_per_page": str(max(1, min(limit, 50)))},
                 headers=HEADERS,
                 timeout=HTTP_TIMEOUT,
             )
-            # 并行聚合时偶发 410，重试一次
-            if resp.status_code == 410 and attempt == 0:
+            if resp.status_code == 410:
+                last_err = (resp.text or "")[:240]
+                time.sleep(0.15 * (attempt + 1))
                 continue
             break
+
         assert resp is not None
+        if resp.status_code == 410:
+            raise RuntimeError(
+                "PulseMCP v0beta 正在日落（API_SUNSET，随机失败）。"
+                "请设置环境变量 PULSEMCP_API_KEY（及可选 PULSEMCP_TENANT_ID）改用 v0.1；"
+                "申请：hello@pulsemcp.com"
+                + (f" | raw={last_err}" if last_err else "")
+            )
         resp.raise_for_status()
         servers = resp.json().get("servers") or []
         out = []
@@ -442,7 +564,8 @@ class McpMarketAggregator:
 
         def _run(name: str) -> Tuple[str, List[Dict[str, Any]], Optional[str]]:
             try:
-                return name, CLIENTS[name].search(query, limit=limit_per_source), None
+                client = PulseMCPClient() if name == "pulsemcp" else CLIENTS[name]
+                return name, client.search(query, limit=limit_per_source), None
             except Exception as e:
                 return name, [], str(e)
 
@@ -459,6 +582,8 @@ class McpMarketAggregator:
             if name in results_by_source:
                 ordered.extend(results_by_source[name])
         merged = _dedupe(ordered)
+        import os
+        has_pulse_key = bool(os.environ.get("PULSEMCP_API_KEY", "").strip())
         meta = {
             "sources": {
                 name: {
@@ -468,7 +593,15 @@ class McpMarketAggregator:
                 }
                 for name in self.sources
             },
-            "note": "mcp.so 无公开 JSON 搜索 API，目录类发现由 Glama 覆盖",
+            "note": (
+                "mcp.so 无公开 JSON API，由 Glama 覆盖；"
+                + (
+                    "PulseMCP 使用 v0.1（已配置 API Key）"
+                    if has_pulse_key
+                    else "PulseMCP v0beta 日落中，稳定使用请配置 PULSEMCP_API_KEY"
+                )
+            ),
+            "pulsemcp_mode": "v0.1" if has_pulse_key else "v0beta",
         }
         return merged, meta
 

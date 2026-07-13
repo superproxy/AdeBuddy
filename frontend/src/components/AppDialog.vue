@@ -84,7 +84,7 @@ function onKeydown(e: KeyboardEvent) {
               <p
                 v-if="ui.dialog.message"
                 id="app-dialog-desc"
-                class="m-0 mt-1 text-xs text-ink-500 leading-relaxed"
+                class="m-0 mt-1 text-xs text-ink-500 leading-relaxed whitespace-pre-line"
               >
                 {{ ui.dialog.message }}
               </p>
@@ -115,6 +115,27 @@ function onKeydown(e: KeyboardEvent) {
                   :title="ui.dialog.detail"
                 >{{ ui.dialog.detail }}</div>
               </div>
+            </div>
+
+            <div
+              v-if="!isPrompt && ui.dialog.links?.length"
+              class="mb-3 flex flex-wrap gap-2"
+            >
+              <a
+                v-for="link in ui.dialog.links"
+                :key="link.href"
+                :href="link.href"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center gap-1 h-7 px-2.5 text-[11px] font-medium rounded-lg border border-ink-300 text-brand-600 bg-white hover:bg-brand-50 hover:border-brand-300 transition"
+              >
+                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  <path d="M15 3h6v6" />
+                  <path d="M10 14L21 3" />
+                </svg>
+                {{ link.label }}
+              </a>
             </div>
 
             <template v-if="isPrompt">

@@ -968,6 +968,24 @@ def mcp_search():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/mcp/market-status", methods=["GET"])
+def mcp_market_status():
+    """返回市场源依赖状态（如 PulseMCP API Key 是否已配置）。"""
+    import os
+    configured = bool(os.environ.get("PULSEMCP_API_KEY", "").strip())
+    return jsonify({
+        "ok": True,
+        "configured": configured,
+        "pulsemcp": {
+            "configured": configured,
+            "mode": "v0.1" if configured else "v0beta",
+            "docs_url": "https://www.pulsemcp.com/api/docs/v0.1",
+            "api_url": "https://www.pulsemcp.com/api",
+            "mailto": "mailto:hello@pulsemcp.com",
+        },
+    })
+
+
 @app.route("/api/mcp/detail", methods=["GET"])
 def mcp_detail():
     """获取 MCP 详情 / 可安装配置。
