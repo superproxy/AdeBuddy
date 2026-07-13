@@ -113,7 +113,7 @@ KEY_FINGERPRINTS: List[Dict[str, Any]] = [
         "unique": False,
         "reason": "通用 sk- Key，需端点探测消歧",
         "probe_providers": [
-            "openai", "deepseek", "volcengine", "moonshot", "qwen",
+            "openai", "deepseek", "volcengine", "moonshot", "qwen", "openicu",
         ],
     },
 ]
@@ -138,7 +138,7 @@ PROBE_ENDPOINTS: Dict[str, Dict[str, Any]] = {
     "zaiCoding": {"base_url": "https://api.z.ai/api/coding/paas/v4", "protocol": "openai"},
     "openrouter": {"base_url": "https://openrouter.ai/api/v1", "protocol": "openai"},
     "anthropic": {"base_url": "https://api.anthropic.com/v1", "protocol": "anthropic"},
-    "openicu": {"base_url": "https://rehdasu.cn/v1", "protocol": "openai"},
+    "openicu": {"base_url": "https://openrouter.icu/v1", "protocol": "openai"},
 }
 
 # /models 返回的 model id 签名 → 用于探测二次验真打分
@@ -156,6 +156,8 @@ MODEL_SIGNATURES: Dict[str, Tuple[str, ...]] = {
     "zaiCoding": ("glm-", "glm"),
     "openrouter": ("/",),  # OpenRouter 模型多为 provider/model
     "anthropic": ("claude",),
+    # OpenICU 同时代理 claude-* 与 gpt-* 两类模型
+    "openicu": ("claude", "gpt-"),
 }
 
 PROBE_TIMEOUT_SEC = 4.0
@@ -306,7 +308,7 @@ DETECT_RULES: List[Dict[str, Any]] = [
     {
         "provider": "openicu",
         "key_prefixes": [],
-        "url_includes": ["rehdasu"],
+        "url_includes": ["rehdasu", "openrouter.icu"],
         "url_requires": [],
         "url_excludes": [],
         "key_only": False,
@@ -417,10 +419,33 @@ def probe_endpoint(api_key: str, base_url: str, protocol: str = "openai") -> Dic
 
 
 def _probe_urls_for_provider(name: str) -> List[Tuple[str, str]]:
-    """返回 [(base_url, protocol), ...]，权威端点优先，含 alt_base_urls。"""
+    """返回 [(base_url, protocol), ...]，权威端点优先，含 alt_base_urls。
+
+    支持两种结构：
+      - 旧结构：单 base_url + protocol + alt_base_urls（共享同一协议）
+      - 新结构：protocols 列表，每项 {base_url, protocol}，可表达双协议端点
+        （如 deepseek 同时有 openai 与 anthropic 端点）
+    """
     ep = PROBE_ENDPOINTS.get(name)
     if not ep:
         return []
+    multi = ep.get("protocols")
+    if isinstance(multi, list):
+        out: List[Tuple[str, str]] = []
+        seen: set = set()
+        for p in multi:
+            if not isinstance(p, dict):
+                continue
+            bu = (p.get("base_url") or "").strip()
+            proto = (p.get("protocol") or "openai").strip() or "openai"
+            # 按 (base_url, protocol) 去重：同一 URL 可能同时支持两种鉴权协议
+            # （如 openicu 的 openrouter.icu/v1 同时走 openai 与 anthropic）
+            key = (bu, proto)
+            if bu and key not in seen:
+                seen.add(key)
+                out.append((bu, proto))
+        if out:
+            return out
     protocol = ep.get("protocol") or "openai"
     urls: List[str] = []
     primary = (ep.get("base_url") or "").strip()
