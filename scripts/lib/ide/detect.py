@@ -120,7 +120,7 @@ IDE_DETECT_META = {
     "OpenCode": {
         "label": "OpenCode",
         "cli_names": ["opencode"],
-        "macos_apps": [],
+        "macos_apps": ["/Applications/OpenCode.app"],
         "windows_apps": [],
         "config_dirs": [".config/opencode", ".opencode"],
         "sessions_subdir": "sessions",
