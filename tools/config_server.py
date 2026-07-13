@@ -1213,6 +1213,158 @@ def _add_dir_to_zip(zf: zipfile.ZipFile, src_dir: Path, arc_prefix: str) -> int:
     return count
 
 
+def _collect_plugin_llm(cfg: dict) -> str | None:
+    """从 plugin.yaml 的 llm 列表中提取 provider 名，再从 llm.yaml 中提取对应配置（含 api_key）。
+
+    返回 YAML 字符串（仅含声明的 provider），如无匹配返回 None。
+    """
+    llm_list = cfg.get("llm", []) or []
+    if not llm_list:
+        return None
+    # 提取 plugin 声明的 provider 名
+    provider_names = set()
+    for item in llm_list:
+        if isinstance(item, dict):
+            p = item.get("provider", "").strip()
+            if p:
+                provider_names.add(p)
+        elif isinstance(item, str):
+            provider_names.add(item)
+    if not provider_names:
+        return None
+    # 从 llm.yaml 中提取对应 provider
+    try:
+        llm_data = load_env_config_file(_ensure_llm_file())
+    except Exception:
+        return None
+    llm_section = llm_data.get("llm", {}) if isinstance(llm_data, dict) else {}
+    extracted = {"llm": {}}
+    if "_active_provider" in llm_section:
+        extracted["llm"]["_active_provider"] = llm_section["_active_provider"]
+    if "_active_protocol" in llm_section:
+        extracted["llm"]["_active_protocol"] = llm_section["_active_protocol"]
+    found = False
+    for pname in provider_names:
+        if pname in llm_section and isinstance(llm_section[pname], dict):
+            extracted["llm"][pname] = llm_section[pname]
+            found = True
+    if not found:
+        return None
+    import yaml as _yaml
+    return _yaml.dump(extracted, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+def _collect_plugin_subagents(cfg: dict) -> str | None:
+    """从 subagent.yaml 中提取 plugin 声明的 subagents，返回 YAML 字符串。"""
+    sa_names = cfg.get("subagents", []) or []
+    if not sa_names:
+        return None
+    if isinstance(sa_names, bool):
+        return None  # true 不是列表
+    name_set = set(str(n).strip() for n in sa_names if str(n).strip())
+    if not name_set:
+        return None
+    try:
+        sa_data = load_env_config_file(_ensure_subagent_file())
+    except Exception:
+        return None
+    all_sa = sa_data.get("subagents", []) if isinstance(sa_data, dict) else []
+    filtered = [s for s in all_sa if isinstance(s, dict) and s.get("name", "").strip() in name_set]
+    if not filtered:
+        return None
+    import yaml as _yaml
+    return _yaml.dump({"subagents": filtered}, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+def _collect_plugin_rules(cfg: dict) -> list[tuple[str, Path]]:
+    """收集 plugin 声明的 rules .md 文件。
+
+    Returns:
+        [(rel_path, Path), ...]  仅返回存在的文件。
+    """
+    rule_paths = cfg.get("rules", []) or []
+    if not rule_paths or isinstance(rule_paths, bool):
+        return []
+    result: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+    for r in rule_paths:
+        rel = str(r).strip()
+        if not rel or rel in seen:
+            continue
+        seen.add(rel)
+        # 确保有 .md 扩展名
+        if not rel.endswith(".md"):
+            rel = rel + ".md"
+        # 在 config/rules/ 和 template/rules/ 中查找
+        for base in (RULES_DIR, RULES_TEMPLATE_DIR):
+            p = base / rel
+            if p.exists() and p.is_file():
+                result.append((rel, p))
+                break
+    return result
+
+
+def _collect_plugin_commands(cfg: dict) -> str | None:
+    """从 cmd.yaml 中提取 plugin 声明的 commands，返回 YAML 字符串。"""
+    cmd_names = cfg.get("commands", []) or []
+    if not cmd_names or isinstance(cmd_names, bool):
+        return None
+    name_set = set(str(n).strip() for n in cmd_names if str(n).strip())
+    if not name_set:
+        return None
+    try:
+        cmd_data = load_env_config_file(_ensure_cmd_file())
+    except Exception:
+        return None
+    all_cmds = cmd_data.get("commands", []) if isinstance(cmd_data, dict) else []
+    filtered = [c for c in all_cmds if isinstance(c, dict) and c.get("name", "").strip() in name_set]
+    if not filtered:
+        return None
+    import yaml as _yaml
+    return _yaml.dump({"commands": filtered}, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+def _collect_plugin_hooks(cfg: dict) -> Path | None:
+    """如果 plugin 声明了 hooks=true，返回 hooks.json 路径。"""
+    hooks_flag = cfg.get("hooks")
+    if not hooks_flag:
+        return None
+    try:
+        path = _ensure_hooks_file()
+        if path.exists():
+            return path
+    except Exception:
+        pass
+    return None
+
+
+def _add_plugin_extras_to_zip(zf: zipfile.ZipFile, cfg: dict) -> None:
+    """将 plugin 关联的 llm/subagents/rules/commands/hooks 打包到 zip。"""
+    # llm.yaml
+    llm_yaml_str = _collect_plugin_llm(cfg)
+    if llm_yaml_str:
+        zf.writestr("llm.yaml", llm_yaml_str)
+
+    # subagents.yaml
+    sa_yaml_str = _collect_plugin_subagents(cfg)
+    if sa_yaml_str:
+        zf.writestr("subagents.yaml", sa_yaml_str)
+
+    # rules/*.md
+    for rel, rule_path in _collect_plugin_rules(cfg):
+        zf.write(rule_path, arcname=f"rules/{rel}")
+
+    # commands.yaml
+    cmd_yaml_str = _collect_plugin_commands(cfg)
+    if cmd_yaml_str:
+        zf.writestr("commands.yaml", cmd_yaml_str)
+
+    # hooks/hooks.json
+    hooks_path = _collect_plugin_hooks(cfg)
+    if hooks_path:
+        zf.write(hooks_path, arcname="hooks/hooks.json")
+
+
 @app.route("/api/plugins", methods=["GET"])
 def list_plugins():
     from lib.plugins import read_installed_plugins
@@ -1261,6 +1413,10 @@ def save_plugin():
         "mcpServers": body.get("mcpServers", {}),
         "skills": body.get("skills", []),
         "llm": body.get("llm", []),
+        "subagents": body.get("subagents", []),
+        "rules": body.get("rules", []),
+        "commands": body.get("commands", []),
+        "hooks": body.get("hooks", False),
     }
     # 可选：初始化脚本（install script）
     scripts = body.get("scripts")
@@ -1349,6 +1505,8 @@ def export_plugin():
             zf.write(path, arcname=fname)
             for skill_name, skill_dir in skill_dirs:
                 _add_dir_to_zip(zf, skill_dir, arc_prefix=f"skills/{skill_name}")
+            # 打包 llm/subagents/rules/commands/hooks
+            _add_plugin_extras_to_zip(zf, cfg)
 
         buf.seek(0)
         safe_name = "".join(c for c in plugin_name if c.isalnum() or c in ("-", "_"))
@@ -1386,6 +1544,7 @@ def export_all_plugins():
                             continue
                         seen_skills.add(skill_name)
                         _add_dir_to_zip(zf, skill_dir, arc_prefix=f"skills/{skill_name}")
+                    _add_plugin_extras_to_zip(zf, cfg)
                 except Exception:
                     pass  # 单个插件解析失败不阻塞
     buf.seek(0)
@@ -1426,6 +1585,7 @@ def export_selected_plugins():
                         continue
                     seen_skills.add(skill_name)
                     _add_dir_to_zip(zf, skill_dir, arc_prefix=f"skills/{skill_name}")
+                _add_plugin_extras_to_zip(zf, cfg)
             except Exception:
                 pass  # 单个插件解析失败不阻塞
     buf.seek(0)
@@ -1434,28 +1594,38 @@ def export_selected_plugins():
 
 
 def _import_plugin_zip(buf: io.BytesIO, overwrite: bool) -> tuple:
-    """从 zip 导入插件配置 + skills 目录。
+    """从 zip 导入插件配置 + skills + llm/subagents/rules/commands/hooks。
 
     zip 结构（由 export_plugin / export_all_plugins 生成）：
-      - *.plugin.yaml  → 写入 config/plugins/
+      - *.plugin.yaml    → 写入 config/plugins/
       - skills/<name>/... → 复制到 config/skills/<name>/
+      - llm.yaml          → 合并到 config/llm/llm.yaml（按 provider 合并）
+      - subagents.yaml    → 合并到 config/subagent/subagent.yaml
+      - rules/<path>.md   → 写入 config/rules/
+      - commands.yaml     → 合并到 config/cmd/cmd.yaml
+      - hooks/hooks.json  → 写入 config/hooks/hooks.json
 
     Returns:
         (response_dict, http_status)
     """
     imported_plugins: list[dict] = []
     imported_skills: list[str] = []
+    imported_extras: list[str] = []
     skipped: list[dict] = []
 
     with zipfile.ZipFile(buf, "r") as zf:
-        plugin_entries: list[tuple[str, bytes]] = []  # (arcname, content)
-        skill_entries: dict[str, list[str]] = {}     # skill_name -> [arcname, ...]
+        plugin_entries: list[tuple[str, bytes]] = []
+        skill_entries: dict[str, list[str]] = {}
+        llm_content: bytes | None = None
+        subagent_content: bytes | None = None
+        rules_entries: list[tuple[str, bytes]] = []  # (rel_path, content)
+        commands_content: bytes | None = None
+        hooks_content: bytes | None = None
 
         for info in zf.infolist():
             if info.is_dir():
                 continue
             name = info.filename
-            # 跳过 macOS 元数据和隐藏文件
             if "__MACOSX" in name or Path(name).name.startswith("."):
                 continue
             if name.endswith(".plugin.yaml") or name.endswith(".plugin.yml"):
@@ -1465,6 +1635,17 @@ def _import_plugin_zip(buf: io.BytesIO, overwrite: bool) -> tuple:
                 if len(parts) >= 2:
                     skill_name = parts[1]
                     skill_entries.setdefault(skill_name, []).append(name)
+            elif name == "llm.yaml":
+                llm_content = zf.read(name)
+            elif name == "subagents.yaml":
+                subagent_content = zf.read(name)
+            elif name == "commands.yaml":
+                commands_content = zf.read(name)
+            elif name.startswith("rules/") and name.endswith(".md"):
+                rel = name[len("rules/"):]
+                rules_entries.append((rel, zf.read(name)))
+            elif name == "hooks/hooks.json":
+                hooks_content = zf.read(name)
 
         # 导入 plugin yaml
         for arc, content in plugin_entries:
@@ -1495,7 +1676,7 @@ def _import_plugin_zip(buf: io.BytesIO, overwrite: bool) -> tuple:
                 shutil.rmtree(target, ignore_errors=True)
             target.mkdir(parents=True, exist_ok=True)
             for arc in arc_list:
-                rel_parts = Path(arc).parts[2:]  # 去掉 "skills/" 和 skill_name
+                rel_parts = Path(arc).parts[2:]
                 if not rel_parts:
                     continue
                 dst = target.joinpath(*rel_parts)
@@ -1503,13 +1684,100 @@ def _import_plugin_zip(buf: io.BytesIO, overwrite: bool) -> tuple:
                 dst.write_bytes(zf.read(arc))
             imported_skills.append(skill_name)
 
+        # 导入 llm.yaml（合并到 config/llm/llm.yaml）
+        if llm_content:
+            try:
+                imported_llm = yaml.safe_load(llm_content.decode("utf-8"))
+                if isinstance(imported_llm, dict) and isinstance(imported_llm.get("llm"), dict):
+                    llm_path = _ensure_llm_file()
+                    existing = load_env_config_file(llm_path)
+                    if not isinstance(existing, dict):
+                        existing = {}
+                    if not isinstance(existing.get("llm"), dict):
+                        existing["llm"] = {}
+                    for pname, pcfg in imported_llm["llm"].items():
+                        if pname.startswith("_"):
+                            if pname not in existing["llm"]:
+                                existing["llm"][pname] = pcfg
+                        else:
+                            existing["llm"][pname] = pcfg
+                    save_env_config_file(llm_path, existing)
+                    imported_extras.append("llm.yaml")
+            except Exception as e:
+                skipped.append({"file": "llm.yaml", "reason": str(e)})
+
+        # 导入 subagents.yaml（合并到 config/subagent/subagent.yaml）
+        if subagent_content:
+            try:
+                imported_sa = yaml.safe_load(subagent_content.decode("utf-8"))
+                if isinstance(imported_sa, dict) and isinstance(imported_sa.get("subagents"), list):
+                    sa_path = _ensure_subagent_file()
+                    existing = load_env_config_file(sa_path)
+                    if not isinstance(existing, dict):
+                        existing = {"subagents": []}
+                    if not isinstance(existing.get("subagents"), list):
+                        existing["subagents"] = []
+                    existing_names = set(s.get("name") for s in existing["subagents"] if isinstance(s, dict))
+                    for sa in imported_sa["subagents"]:
+                        if isinstance(sa, dict) and sa.get("name") not in existing_names:
+                            existing["subagents"].append(sa)
+                            existing_names.add(sa.get("name"))
+                    save_env_config_file(sa_path, existing)
+                    imported_extras.append("subagents.yaml")
+            except Exception as e:
+                skipped.append({"file": "subagents.yaml", "reason": str(e)})
+
+        # 导入 rules/*.md → config/rules/
+        for rel, content in rules_entries:
+            if ".." in Path(rel).parts:
+                continue
+            dst = RULES_DIR / rel
+            if dst.exists() and not overwrite:
+                skipped.append({"rule": rel, "reason": "已存在"})
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(content)
+            imported_extras.append(f"rules/{rel}")
+
+        # 导入 commands.yaml（合并到 config/cmd/cmd.yaml）
+        if commands_content:
+            try:
+                imported_cmd = yaml.safe_load(commands_content.decode("utf-8"))
+                if isinstance(imported_cmd, dict) and isinstance(imported_cmd.get("commands"), list):
+                    cmd_path = _ensure_cmd_file()
+                    existing = load_env_config_file(cmd_path)
+                    if not isinstance(existing, dict):
+                        existing = {"commands": []}
+                    if not isinstance(existing.get("commands"), list):
+                        existing["commands"] = []
+                    existing_names = set(c.get("name") for c in existing["commands"] if isinstance(c, dict))
+                    for cmd in imported_cmd["commands"]:
+                        if isinstance(cmd, dict) and cmd.get("name") not in existing_names:
+                            existing["commands"].append(cmd)
+                            existing_names.add(cmd.get("name"))
+                    save_env_config_file(cmd_path, existing)
+                    imported_extras.append("commands.yaml")
+            except Exception as e:
+                skipped.append({"file": "commands.yaml", "reason": str(e)})
+
+        # 导入 hooks/hooks.json → config/hooks/hooks.json
+        if hooks_content:
+            try:
+                hooks_path = _ensure_hooks_file()
+                hooks_path.write_bytes(hooks_content)
+                imported_extras.append("hooks/hooks.json")
+            except Exception as e:
+                skipped.append({"file": "hooks/hooks.json", "reason": str(e)})
+
     result = {
         "ok": True,
         "plugins": imported_plugins,
         "skills": imported_skills,
+        "extras": imported_extras,
         "skipped": skipped,
         "plugin_count": len(imported_plugins),
         "skill_count": len(imported_skills),
+        "extras_count": len(imported_extras),
     }
     return (jsonify(result), 200)
 
