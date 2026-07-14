@@ -52,7 +52,7 @@ function onKeydown(e: KeyboardEvent) {
     <Transition name="app-dialog">
       <div
         v-if="ui.dialog.visible"
-        class="fixed inset-0 z-[90] flex items-center justify-center p-5 bg-[rgba(15,20,30,0.48)]"
+        class="fixed inset-0 z-[110] flex items-center justify-center p-5 bg-[rgba(15,20,30,0.48)]"
         role="dialog"
         aria-modal="true"
         :aria-labelledby="'app-dialog-title'"

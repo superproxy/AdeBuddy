@@ -158,10 +158,57 @@ export const useMcpStore = defineStore('mcp', () => {
     if (item.id) p.set('id', String(item.id))
     if (item.owner) p.set('owner', item.owner)
     if (item.name) p.set('name', item.name)
+    if (item.repo_url) p.set('repo_url', String(item.repo_url))
     return p.toString()
   }
+  async function fetchMcpDetail(item: any) {
+    return api<{ ok: boolean; data?: any; install?: any; install_error?: string; error?: string }>(
+      '/api/mcp/detail?' + _mcpDetailQs(item),
+    )
+  }
+  function resolveMcpInstallConfig(item: any, r: { data?: any; install?: any; install_error?: string }) {
+    let cfg: any = r.install?.server_config
+    if (!cfg) {
+      const data = r.data || {}
+      const servers = data.servers || data.mcp_servers || []
+      if (servers.length) {
+        const s = servers[0]
+        cfg = { type: s.type, url: s.url }
+        if (data.auth_required) cfg.headers = { Authorization: 'Bearer ${MODELSCOPE_TOKEN}' }
+      } else if (Array.isArray(data.server_config)) {
+        for (const block of data.server_config) {
+          const mcpServers = block?.mcpServers
+          if (mcpServers && typeof mcpServers === 'object') {
+            const key = Object.keys(mcpServers)[0]
+            if (key) {
+              cfg = { ...mcpServers[key] }
+              break
+            }
+          }
+        }
+      } else if (data.server_config?.mcpServers) {
+        const key = Object.keys(data.server_config.mcpServers)[0]
+        if (key) cfg = { ...data.server_config.mcpServers[key] }
+      } else if (data.server_config && (data.server_config.command || data.server_config.url)) {
+        cfg = data.server_config
+      }
+      if (cfg?.env && typeof cfg.env === 'object') {
+        const env: Record<string, string> = {}
+        for (const [k, v] of Object.entries(cfg.env)) {
+          const s = String(v ?? '')
+          env[k] = (/^<[^>]+>$/i.test(s) || /your[_-]?token/i.test(s) || s.includes('YOUR_'))
+            ? `\${${k}}`
+            : s
+        }
+        cfg = { ...cfg, env }
+      }
+    }
+    const localName = (item.name || item.id || 'mcp').toString().split('/').pop() || 'mcp'
+    const key = r.install?.local_name || localName
+    return { cfg, key, error: cfg ? '' : (r.install_error || '该来源无法自动生成配置，请改用手动添加') }
+  }
   async function getMcpDetail(item: any) {
-    const r = await api<{ ok: boolean; data?: any; install?: any; install_error?: string; error?: string }>('/api/mcp/detail?' + _mcpDetailQs(item))
+    const r = await fetchMcpDetail(item)
     if (!r.ok) { ui.toast('获取失败: ' + r.error, 'err'); return }
     const payload = {
       source: item.source || 'modelscope',
@@ -171,27 +218,18 @@ export const useMcpStore = defineStore('mcp', () => {
     }
     ui.showModal((item.name || item.id || 'MCP') + ' · ' + (item.source_label || item.source || ''), JSON.stringify(payload, null, 2))
   }
-  async function addMarketMcpToTemplate(item: any) {
-    const localName = (item.name || item.id || 'mcp').toString().split('/').pop() || 'mcp'
-    const r = await api<{ ok: boolean; data?: any; install?: any; install_error?: string; error?: string }>('/api/mcp/detail?' + _mcpDetailQs(item))
-    if (!r.ok) { ui.toast('获取失败: ' + r.error, 'err'); return }
-    let cfg: any = r.install?.server_config
-    if (!cfg) {
-      const data = r.data || {}
-      const servers = data.servers || data.mcp_servers || []
-      if (servers.length) {
-        const s = servers[0]
-        cfg = { type: s.type, url: s.url }
-        if (data.auth_required) cfg.headers = { Authorization: 'Bearer ${MODELSCOPE_TOKEN}' }
-      } else if (data.server_config) {
-        cfg = data.server_config
-      }
+  async function addMarketMcpToTemplate(item: any, detail?: { data?: any; install?: any; install_error?: string }) {
+    let payload = detail
+    if (!payload) {
+      const r = await fetchMcpDetail(item)
+      if (!r.ok) { ui.toast('获取失败: ' + r.error, 'err'); return }
+      payload = r
     }
+    const { cfg, key, error } = resolveMcpInstallConfig(item, payload)
     if (!cfg) {
-      ui.toast(r.install_error || '该来源无法自动生成配置，请改用手动添加', 'warn')
+      ui.toast(error, 'warn')
       return
     }
-    const key = r.install?.local_name || localName
     mcpTemplate.mcpServers[key] = cfg
     const sr = await api('/api/mcp/save', { method: 'POST', body: JSON.stringify({ data: mcpTemplate }) })
     sr.ok
@@ -359,7 +397,7 @@ export const useMcpStore = defineStore('mcp', () => {
     mcpServerEntries, filteredServers, mcpEnabledCount, mcpDisabledCount, mcpKeyCount,
     MCP_SOURCE_ORDER, MCP_SOURCE_LABELS,
     loadMcpCatalog, loadMcpConfig, loadPulseMcpStatus, searchMcpMarket, toggleMarketSource,
-    getMcpDetail, addMarketMcpToTemplate,
+    fetchMcpDetail, resolveMcpInstallConfig, getMcpDetail, addMarketMcpToTemplate,
     toggleMcpDisabled, deleteMcpEntry, saveMcpTemplate, generateMcpRuntime,
     parsePastedMcp, addManualMcp, toggleAllMcp, saveMcpAll, syncMcpFull,
     startEditMcp, cancelEditMcp, saveEditMcp, saveMcpConfig, addMcpConfigKey, deleteMcpConfigKey,

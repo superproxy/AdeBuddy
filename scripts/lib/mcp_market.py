@@ -11,6 +11,8 @@ search 并行 fan-out；按 SOURCE_PRIORITY 合并；按 repo_url / 包名 / 规
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -19,12 +21,16 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import requests
 
 HTTP_TIMEOUT = 12
+# Glama 跨境偶发慢/超时：分开 connect/read，避免卡死；失败时走软降级
+GLAMA_TIMEOUT = (5, 18)
+REPO_FETCH_TIMEOUT = (5, 12)
 # PulseMCP 对部分 UA / 并行请求不稳定，使用浏览器式 UA
 USER_AGENT = "AdeBuddy/1.0"
 HEADERS = {"User-Agent": USER_AGENT, "Accept": "application/json"}
 
 MODELSCOPE_LIST_API = "https://www.modelscope.cn/openapi/v1/mcp/servers"
-MODELSCOPE_DETAIL_API = "https://www.modelscope.cn/openapi/v1/mcp/servers/{owner}/{name}"
+# 详情路径必须带完整 mcp_id：@owner/name 或 owner/name（不能拆成 owner/name 丢掉 @）
+MODELSCOPE_DETAIL_API = "https://www.modelscope.cn/openapi/v1/mcp/servers/{mcp_id}"
 REGISTRY_BASE = "https://registry.modelcontextprotocol.io"
 SMITHERY_BASE = "https://api.smithery.ai"
 # PulseMCP：v0beta 正在日落（随机 410 API_SUNSET）；正式接口为 v0.1（需 API Key）
@@ -190,17 +196,71 @@ class ModelScopeClient:
             ))
         return out
 
-    def detail(self, owner: str, name: str) -> Dict[str, Any]:
-        url = MODELSCOPE_DETAIL_API.format(owner=owner, name=name)
-        resp = requests.get(
-            url,
-            params={"get_operational_url": "true"},
-            headers={**HEADERS, "Content-Type": "application/json"},
-            timeout=HTTP_TIMEOUT,
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-        return payload.get("data") or payload
+    def detail(
+        self,
+        owner: str = "",
+        name: str = "",
+        server_id: str = "",
+    ) -> Dict[str, Any]:
+        candidates = _modelscope_id_candidates(server_id=server_id, owner=owner, name=name)
+        headers = {**HEADERS, "Content-Type": "application/json"}
+        token = _modelscope_api_token()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        # get_operational_url=true 需要登录态；无 Token 时拉公开详情（含 server_config）
+        want_ops = bool(token)
+        last_err: Optional[Exception] = None
+        for mcp_id in candidates:
+            url = MODELSCOPE_DETAIL_API.format(mcp_id=mcp_id)
+            try:
+                params: Optional[Dict[str, str]] = {"get_operational_url": "true"} if want_ops else None
+                resp = requests.get(url, params=params, headers=headers, timeout=HTTP_TIMEOUT)
+                if resp.status_code == 401 and params:
+                    resp = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+                if resp.status_code == 404:
+                    last_err = LookupError(f"ModelScope 未找到: {mcp_id}")
+                    continue
+                resp.raise_for_status()
+                payload = resp.json()
+                return payload.get("data") or payload
+            except Exception as e:
+                last_err = e
+                continue
+        if last_err:
+            raise last_err
+        raise ValueError("modelscope 需要 id 或 owner/name")
+
+
+def _modelscope_api_token() -> str:
+    return (
+        os.environ.get("MODELSCOPE_API_TOKEN", "").strip()
+        or os.environ.get("MODELSCOPE_TOKEN", "").strip()
+    )
+
+
+def _modelscope_id_candidates(server_id: str = "", owner: str = "", name: str = "") -> List[str]:
+    """生成 ModelScope 详情 mcp_id 候选（保留 @，并兼容无 @ 的社区 id）。"""
+    out: List[str] = []
+    sid = (server_id or "").strip()
+    if sid:
+        out.append(sid)
+        return out
+    o = (owner or "").strip()
+    n = (name or "").strip()
+    if o and n:
+        # 社区 id 多为 owner/name；官方 scoped 包需要 @owner/name
+        out.append(f"{o}/{n}")
+        out.append(f"@{o}/{n}")
+    elif n:
+        out.append(n)
+    return out
+
+
+def _modelscope_mcp_id(server_id: str = "", owner: str = "", name: str = "") -> str:
+    cands = _modelscope_id_candidates(server_id=server_id, owner=owner, name=name)
+    if not cands:
+        raise ValueError("modelscope 需要 id 或 owner/name")
+    return cands[0]
 
 
 def _modelscope_owner_name(sid: str) -> Tuple[str, str]:
@@ -217,6 +277,111 @@ def _modelscope_owner_name(sid: str) -> Tuple[str, str]:
         owner, name = s.split("/", 1)
         return owner, name
     return "", s
+
+
+_PLACEHOLDER_VAL = re.compile(
+    r"^(?:<[^>]+>|your[_-]?token(?:[_-]?here)?|changeme|xxx+|TODO)$",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_secret_placeholder(value: str) -> bool:
+    s = (value or "").strip()
+    if not s:
+        return True
+    if _PLACEHOLDER_VAL.match(s) or "YOUR_" in s.upper() or "你的" in s:
+        return True
+    if re.search(r"_optional$", s, re.I):
+        return True
+    if re.match(r"^(?:ghp|gho|github_pat)_[x0-9a-z]*$", s, re.I) and "x" in s.lower():
+        return True
+    if re.match(r"^(?:sk|tok)[-_]?[x0-9]*$", s, re.I) and "x" in s.lower():
+        return True
+    if "xxx" in s.lower() and len(s) < 48:
+        return True
+    return False
+
+
+def _normalize_ms_env(env: Any) -> Dict[str, str]:
+    if not isinstance(env, dict):
+        return {}
+    out: Dict[str, str] = {}
+    for k, v in env.items():
+        key = str(k)
+        if not isinstance(v, str):
+            out[key] = str(v) if v is not None else f"${{{key}}}"
+            continue
+        if _looks_like_secret_placeholder(v):
+            out[key] = f"${{{key}}}"
+        else:
+            out[key] = v
+    return out
+
+
+def _normalize_ms_server_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """把 ModelScope server_config 条目规范成可写入 mcpServers 的 dict。"""
+    out = dict(cfg)
+    if isinstance(out.get("env"), dict):
+        out["env"] = _normalize_ms_env(out["env"])
+    transport = str(out.pop("transport", "") or "").lower()
+    if transport and "type" not in out:
+        if transport in ("sse", "http", "streamable-http", "streamablehttp"):
+            out["type"] = "sse" if transport == "sse" else "streamableHttp"
+    # AdeBuddy 模板不需要该浏览器专用字段
+    out.pop("useNodeEventSource", None)
+    return out
+
+
+def _extract_modelscope_install(data: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """从 ModelScope 详情中提取 (local_name, server_config)。"""
+    # 1) get_operational_url 返回的 hosted servers
+    servers = data.get("servers") or data.get("mcp_servers") or []
+    if isinstance(servers, list) and servers:
+        s0 = servers[0] if isinstance(servers[0], dict) else {}
+        cfg: Dict[str, Any] = {}
+        if s0.get("url"):
+            cfg["url"] = s0["url"]
+        if s0.get("type"):
+            cfg["type"] = s0["type"]
+        if data.get("auth_required"):
+            cfg["headers"] = {"Authorization": "Bearer ${MODELSCOPE_TOKEN}"}
+        if cfg.get("url"):
+            return _local_name(str(data.get("name") or data.get("id") or "mcp")), cfg
+
+    # 2) operational_urls（有时仅 URL 列表）
+    ops = data.get("operational_urls") or []
+    if isinstance(ops, list) and ops:
+        first = ops[0]
+        url = first if isinstance(first, str) else (first or {}).get("url")
+        if url:
+            cfg = {"type": "sse", "url": url}
+            if data.get("auth_required"):
+                cfg["headers"] = {"Authorization": "Bearer ${MODELSCOPE_TOKEN}"}
+            return _local_name(str(data.get("name") or data.get("id") or "mcp")), cfg
+
+    # 3) 公开详情里的 server_config：[{mcpServers:{name: cfg}}, ...]
+    sc = data.get("server_config")
+    blocks: List[Any]
+    if isinstance(sc, list):
+        blocks = sc
+    elif isinstance(sc, dict):
+        blocks = [sc]
+    else:
+        blocks = []
+
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        mcp_servers = block.get("mcpServers")
+        if isinstance(mcp_servers, dict) and mcp_servers:
+            key, raw_cfg = next(iter(mcp_servers.items()))
+            if isinstance(raw_cfg, dict):
+                return str(key), _normalize_ms_server_cfg(raw_cfg)
+        # 少数条目可能直接是单服务字段
+        if block.get("command") or block.get("url"):
+            return _local_name(str(data.get("name") or data.get("id") or "mcp")), _normalize_ms_server_cfg(block)
+
+    raise ValueError("未找到可用的 server_config（可配置 MODELSCOPE_API_TOKEN 后重试，或改用手动添加）")
 
 
 class RegistryClient:
@@ -491,6 +656,237 @@ class PulseMCPClient:
         return out
 
 
+def _glama_ns_slug(
+    server_id: str = "",
+    owner: str = "",
+    name: str = "",
+) -> Tuple[str, str]:
+    """解析 Glama namespace/slug。
+
+    必须优先用 id（如 LauraMattz/mcp_ai_news）；
+    item.name 常为展示名「AI News Aggregator」，不能当 slug。
+    """
+    sid = (server_id or "").strip()
+    if "/" in sid:
+        ns, slug = sid.split("/", 1)
+        if ns and slug:
+            return ns, slug
+    o = (owner or "").strip()
+    n = (name or "").strip()
+    # name 含空格/中文时几乎一定是展示名，不能拼进详情路径
+    if o and n and (" " not in n) and not re.search(r"[\u4e00-\u9fff]", n):
+        return o, n
+    if o and sid and "/" not in sid:
+        return o, sid
+    return o, ""
+
+
+def _glama_repo_fallback(ns: str, slug: str, repo_url: str = "") -> str:
+    repo = (repo_url or "").strip()
+    if repo:
+        return repo
+    if ns and slug:
+        return f"https://github.com/{ns}/{slug}"
+    return ""
+
+
+def _glama_manual_message(repo: str = "", reason: str = "") -> str:
+    base = "Glama 条目通常需手动配置"
+    if reason:
+        base = f"{reason}。{base}"
+    if repo:
+        return f"{base}。仓库: {repo}。请到「手动添加」粘贴官方安装 JSON。"
+    return f"{base}。请到「手动添加」粘贴官方安装 JSON。"
+
+
+def _parse_github_repo(repo_url: str) -> Optional[Tuple[str, str]]:
+    """从仓库 URL 解析 (owner, repo)。"""
+    u = (repo_url or "").strip()
+    if not u:
+        return None
+    if u.startswith("git@"):
+        u = u.replace(":", "/").replace("git@", "https://", 1)
+    if u.endswith(".git"):
+        u = u[:-4]
+    m = re.search(r"github\.com[/:]([^/\s]+)/([^/\s?#]+)", u, re.I)
+    if not m:
+        return None
+    return m.group(1), m.group(2)
+
+
+def _strip_jsonc(text: str) -> str:
+    """粗略去掉 JSONC 行注释，便于 README 代码块解析。"""
+    out_lines = []
+    for line in (text or "").splitlines():
+        if re.match(r"^\s*//", line):
+            continue
+        out_lines.append(re.sub(r"\s+//.*$", "", line))
+    return "\n".join(out_lines)
+
+
+def _env_from_schema(schema: Any) -> Dict[str, str]:
+    if not isinstance(schema, dict):
+        return {}
+    props = schema.get("properties") or {}
+    if not isinstance(props, dict):
+        return {}
+    env: Dict[str, str] = {}
+    for key, meta in props.items():
+        k = str(key)
+        if isinstance(meta, dict) and meta.get("default") is not None and not isinstance(meta.get("default"), (dict, list)):
+            env[k] = str(meta["default"])
+        else:
+            env[k] = f"${{{k}}}"
+    return env
+
+
+def _merge_env(base: Optional[Dict[str, Any]], extra: Optional[Dict[str, str]]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    if isinstance(base, dict):
+        out.update(_normalize_ms_env(base))
+    if isinstance(extra, dict):
+        for k, v in extra.items():
+            if k not in out or not str(out.get(k) or "").strip():
+                out[k] = v
+    return out
+
+
+def _pick_mcp_server_entry(
+    servers: Dict[str, Any],
+    preferred_name: str = "",
+) -> Optional[Tuple[str, Dict[str, Any]]]:
+    if not isinstance(servers, dict) or not servers:
+        return None
+    pref = _local_name(preferred_name) if preferred_name else ""
+    if pref and pref in servers and isinstance(servers[pref], dict):
+        return pref, dict(servers[pref])
+    # 忽略大小写 / 破折号差异
+    pref_norm = _norm_name(pref)
+    if pref_norm:
+        for k, v in servers.items():
+            if _norm_name(str(k)) == pref_norm and isinstance(v, dict):
+                return str(k), dict(v)
+    for k, v in servers.items():
+        if isinstance(v, dict) and (v.get("command") or v.get("url")):
+            return str(k), dict(v)
+    return None
+
+
+def _extract_mcp_from_readme(text: str, preferred_name: str = "") -> Optional[Tuple[str, Dict[str, Any]]]:
+    """从 README 代码块提取 mcpServers 配置。"""
+    if not text:
+        return None
+    fence = re.compile(r"```(?:json|jsonc)?\s*\n(.*?)```", re.S | re.I)
+    for m in fence.finditer(text):
+        block = _strip_jsonc(m.group(1)).strip()
+        if "mcpServers" not in block:
+            continue
+        # 允许代码块不是纯 JSON：截取最外层 {}
+        start = block.find("{")
+        end = block.rfind("}")
+        if start < 0 or end <= start:
+            continue
+        raw = block[start : end + 1]
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        servers = data.get("mcpServers")
+        picked = _pick_mcp_server_entry(servers if isinstance(servers, dict) else {}, preferred_name)
+        if picked:
+            key, cfg = picked
+            return key, _normalize_ms_server_cfg(cfg)
+    return None
+
+
+def _github_raw_get(owner: str, repo: str, path: str) -> Optional[str]:
+    headers = {**HEADERS, "Accept": "text/plain"}
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    for branch in ("main", "master"):
+        url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
+        try:
+            resp = requests.get(url, headers=headers, timeout=REPO_FETCH_TIMEOUT)
+        except requests.RequestException:
+            continue
+        if resp.status_code == 200 and (resp.text or "").strip():
+            return resp.text
+    return None
+
+
+def _cfg_from_package_json(text: str, preferred_name: str = "") -> Optional[Tuple[str, Dict[str, Any]]]:
+    try:
+        pkg = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(pkg, dict):
+        return None
+    pkg_name = str(pkg.get("name") or "").strip()
+    if not pkg_name:
+        return None
+    local = _local_name(preferred_name or pkg_name)
+    return local, {"command": "npx", "args": ["-y", pkg_name]}
+
+
+def _cfg_from_pyproject(text: str, preferred_name: str = "") -> Optional[Tuple[str, Dict[str, Any]]]:
+    # 轻量解析，避免强依赖 tomllib
+    m = re.search(r'(?m)^name\s*=\s*["\']([^"\']+)["\']', text or "")
+    if not m:
+        return None
+    pkg_name = m.group(1).strip()
+    if not pkg_name:
+        return None
+    local = _local_name(preferred_name or pkg_name)
+    return local, {"command": "uvx", "args": [pkg_name]}
+
+
+def _resolve_install_from_repo(
+    repo_url: str,
+    *,
+    preferred_name: str = "",
+    env_schema: Any = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """替用户完成「打开仓库 → 复制安装 JSON」：从 README / package.json / pyproject 推断配置。"""
+    parsed = _parse_github_repo(repo_url)
+    if not parsed:
+        raise ValueError("仅支持从 GitHub 仓库自动解析安装配置")
+    owner, repo = parsed
+    schema_env = _env_from_schema(env_schema)
+
+    readme = _github_raw_get(owner, repo, "README.md") or _github_raw_get(owner, repo, "readme.md")
+    if readme:
+        picked = _extract_mcp_from_readme(readme, preferred_name=preferred_name or repo)
+        if picked:
+            key, cfg = picked
+            merged_env = _merge_env(cfg.get("env") if isinstance(cfg.get("env"), dict) else {}, schema_env)
+            if merged_env:
+                cfg = {**cfg, "env": merged_env}
+            return key, cfg
+
+    pkg_text = _github_raw_get(owner, repo, "package.json")
+    if pkg_text:
+        picked = _cfg_from_package_json(pkg_text, preferred_name=preferred_name or repo)
+        if picked:
+            key, cfg = picked
+            if schema_env:
+                cfg = {**cfg, "env": schema_env}
+            return key, cfg
+
+    py_text = _github_raw_get(owner, repo, "pyproject.toml")
+    if py_text:
+        picked = _cfg_from_pyproject(py_text, preferred_name=preferred_name or repo)
+        if picked:
+            key, cfg = picked
+            if schema_env:
+                cfg = {**cfg, "env": schema_env}
+            return key, cfg
+
+    raise ValueError("仓库中未找到可识别的 MCP 安装配置（README mcpServers / package.json / pyproject.toml）")
+
+
 class GlamaClient:
     """Glama 目录 API。mcp.so 无稳定公开 JSON 搜索接口，目录类发现统一走 Glama。"""
 
@@ -499,7 +895,7 @@ class GlamaClient:
             f"{GLAMA_BASE}/servers",
             params={"query": query, "first": str(min(limit, 50))},
             headers=HEADERS,
-            timeout=HTTP_TIMEOUT,
+            timeout=GLAMA_TIMEOUT,
         )
         resp.raise_for_status()
         servers = resp.json().get("servers") or []
@@ -532,11 +928,14 @@ class GlamaClient:
             ))
         return out
 
-    def detail(self, namespace: str, slug: str) -> Dict[str, Any]:
+    def detail(self, namespace: str = "", slug: str = "", server_id: str = "") -> Dict[str, Any]:
+        ns, sl = _glama_ns_slug(server_id=server_id, owner=namespace, name=slug)
+        if not ns or not sl:
+            raise ValueError("glama 需要 namespace/slug（完整 id）")
         resp = requests.get(
-            f"{GLAMA_BASE}/servers/{urllib.parse.quote(namespace)}/{urllib.parse.quote(slug)}",
+            f"{GLAMA_BASE}/servers/{urllib.parse.quote(ns)}/{urllib.parse.quote(sl)}",
             headers=HEADERS,
-            timeout=HTTP_TIMEOUT,
+            timeout=GLAMA_TIMEOUT,
         )
         resp.raise_for_status()
         return resp.json()
@@ -611,32 +1010,29 @@ class McpMarketAggregator:
         id: str = "",
         owner: str = "",
         name: str = "",
+        detail: Optional[Dict[str, Any]] = None,
+        repo_url: str = "",
     ) -> Dict[str, Any]:
-        """解析可写入 mcpServers 的 server_config。"""
+        """解析可写入 mcpServers 的 server_config。
+
+        detail / repo_url：可选预取数据，避免 Glama 等源重复打详情接口。
+        """
         source = (source or "modelscope").lower()
         local = _local_name(name or id)
 
         if source == "modelscope":
-            if not owner or not name:
-                # id 形如 @owner/name
-                if id.startswith("@") and "/" in id:
-                    owner, name = id[1:].split("/", 1)
-                else:
-                    raise ValueError("modelscope 需要 owner/name")
-            data = ModelScopeClient().detail(owner, name)
-            servers = data.get("servers") or data.get("mcp_servers") or []
-            cfg = None
-            if servers:
-                s0 = servers[0]
-                cfg = {"type": s0.get("type"), "url": s0.get("url")}
-                if data.get("auth_required"):
-                    cfg["headers"] = {"Authorization": "Bearer ${MODELSCOPE_TOKEN}"}
-            elif data.get("server_config"):
-                cfg = data["server_config"]
-            if not cfg:
-                raise ValueError("未找到 server_config")
+            sid = (id or "").strip()
+            if not sid and not (owner and name):
+                raise ValueError("modelscope 需要 id 或 owner/name")
+            # 详情 API 必须以完整 mcp_id 请求；有 id 时绝不用展示名拼路径
+            data = ModelScopeClient().detail(
+                server_id=sid,
+                owner=owner if not sid else "",
+                name=name if not sid else "",
+            )
+            local, cfg = _extract_modelscope_install(data)
             return {
-                "local_name": _local_name(name),
+                "local_name": local,
                 "server_config": cfg,
                 "source": source,
                 "detail": data,
@@ -689,17 +1085,38 @@ class McpMarketAggregator:
             }
 
         if source == "glama":
-            ns, slug = owner, name
-            if (not ns or not slug) and "/" in (id or ""):
-                ns, slug = id.split("/", 1)
+            ns, slug = _glama_ns_slug(server_id=id, owner=owner, name=name)
             if not ns or not slug:
-                raise ValueError("glama 需要 namespace/slug")
-            detail = GlamaClient().detail(ns, slug)
-            repo = ((detail.get("repository") or {}).get("url") or "")
-            raise ValueError(
-                f"Glama 条目通常需手动配置。仓库: {repo or '未知'}。"
-                "请到「手动添加」粘贴官方安装 JSON。"
+                raise ValueError("glama 需要完整 id（namespace/slug）")
+            data = detail
+            if data is None:
+                try:
+                    data = GlamaClient().detail(namespace=ns, slug=slug)
+                except Exception:
+                    data = {}
+            repo = (
+                ((data or {}).get("repository") or {}).get("url")
+                or _glama_repo_fallback(ns, slug, repo_url)
             )
+            if not repo:
+                raise ValueError(_glama_manual_message(reason="缺少仓库地址"))
+            try:
+                local, cfg = _resolve_install_from_repo(
+                    repo,
+                    preferred_name=slug or name or id,
+                    env_schema=(data or {}).get("environmentVariablesJsonSchema"),
+                )
+            except Exception as e:
+                raise ValueError(
+                    _glama_manual_message(repo, reason=f"自动解析失败: {e}")
+                ) from e
+            return {
+                "local_name": local,
+                "server_config": cfg,
+                "source": source,
+                "detail": data or {"repository": {"url": repo}, "namespace": ns, "slug": slug},
+                "resolved_from": "repo",
+            }
 
         raise ValueError(f"未知 source: {source}")
 
@@ -719,5 +1136,14 @@ def resolve_mcp_install(
     id: str = "",
     owner: str = "",
     name: str = "",
+    detail: Optional[Dict[str, Any]] = None,
+    repo_url: str = "",
 ) -> Dict[str, Any]:
-    return McpMarketAggregator().resolve_install(source=source, id=id, owner=owner, name=name)
+    return McpMarketAggregator().resolve_install(
+        source=source,
+        id=id,
+        owner=owner,
+        name=name,
+        detail=detail,
+        repo_url=repo_url,
+    )

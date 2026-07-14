@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMcpStore, MCP_SOURCE_ORDER, MCP_SOURCE_LABELS, PULSEMCP_DOCS_URL, PULSEMCP_API_URL, PULSEMCP_MAILTO, type McpSourceId } from '../stores/mcp'
 
@@ -13,6 +13,7 @@ const {
 } = storeToRefs(mcp)
 const {
   searchMcpMarket, toggleMarketSource, getMcpDetail, addMarketMcpToTemplate,
+  fetchMcpDetail, resolveMcpInstallConfig,
   parsePastedMcp, addManualMcp, toggleAllMcp, saveMcpAll, syncMcpFull,
   startEditMcp, cancelEditMcp, saveEditMcp, generateMcpRuntime,
   toggleMcpDisabled, deleteMcpEntry, saveMcpConfig, addMcpConfigKey, deleteMcpConfigKey,
@@ -23,6 +24,10 @@ type DrawerMode = 'add' | 'edit' | 'keys' | null
 const drawer = ref<DrawerMode>(null)
 const marketInput = ref<HTMLInputElement | null>(null)
 
+const previewItem = ref<any>(null)
+const previewPayload = ref<{ data?: any; install?: any; install_error?: string } | null>(null)
+const previewLoading = ref(false)
+
 const drawerTitle = computed(() => {
   if (drawer.value === 'add') return '添加 MCP'
   if (drawer.value === 'edit') return editingMcp.value ? `编辑 · ${editingMcp.value}` : '编辑'
@@ -30,7 +35,7 @@ const drawerTitle = computed(() => {
   return ''
 })
 const drawerSub = computed(() => {
-  if (drawer.value === 'add') return '多源聚合搜索 · PulseMCP 需 API Key（默认关闭）'
+  if (drawer.value === 'add') return '选中条目后，右侧预览可直接确认配置'
   if (drawer.value === 'keys') return '生成 mcp.json 时替换 ${KEY}'
   return ''
 })
@@ -50,12 +55,71 @@ const sourceMetaItems = computed(() => {
     })
 })
 
+const previewResolved = computed(() => {
+  if (!previewItem.value || !previewPayload.value) return null
+  return resolveMcpInstallConfig(previewItem.value, previewPayload.value)
+})
+const previewJson = computed(() => {
+  const r = previewResolved.value
+  if (!r?.cfg) return ''
+  return JSON.stringify({ [r.key]: r.cfg }, null, 2)
+})
+const previewCanAdd = computed(() => !!previewResolved.value?.cfg && !previewLoading.value)
+const previewRepoUrl = computed(() => {
+  const item = previewItem.value
+  const data = previewPayload.value?.data || {}
+  return (
+    item?.repo_url
+    || data?.repository?.url
+    || data?.repo_url
+    || item?.homepage
+    || ''
+  )
+})
+
 const SUGGESTS = ['filesystem', 'github', 'browser', '地图']
+
+function marketItemKey(item: any) {
+  return String(item?.source || '') + ':' + String(item?.id || item?.name || '')
+}
+function isPreviewSelected(item: any) {
+  return !!previewItem.value && marketItemKey(previewItem.value) === marketItemKey(item)
+}
+function clearPreview() {
+  previewItem.value = null
+  previewPayload.value = null
+  previewLoading.value = false
+}
+async function selectMarketItem(item: any) {
+  previewItem.value = item
+  previewPayload.value = null
+  previewLoading.value = true
+  try {
+    const r = await fetchMcpDetail(item)
+    if (!r.ok) {
+      previewPayload.value = { install_error: r.error || '获取失败' }
+      return
+    }
+    previewPayload.value = r
+  } finally {
+    previewLoading.value = false
+  }
+}
+async function addPreviewToConfigured() {
+  if (!previewItem.value) return
+  await addMarketMcpToTemplate(previewItem.value, previewPayload.value || undefined)
+}
+function setAddTab(tab: 'market' | 'manual') {
+  mcpTab.value = tab
+  if (tab === 'manual') clearPreview()
+  else nextTick(() => marketInput.value?.focus())
+}
 
 async function openDrawer(mode: DrawerMode, editName?: string) {
   if (mode === 'edit' && editName) startEditMcp(editName)
   if (mode === 'add') {
     mcpTab.value = 'market'
+    clearPreview()
     loadPulseMcpStatus()
   }
   drawer.value = mode
@@ -64,6 +128,7 @@ async function openDrawer(mode: DrawerMode, editName?: string) {
 }
 function closeDrawer() {
   if (drawer.value === 'edit') cancelEditMcp()
+  clearPreview()
   drawer.value = null
 }
 async function saveEditAndClose() {
@@ -75,9 +140,6 @@ async function addManualAndMaybeClose() {
   await addManualMcp()
   const after = Object.keys(mcpTemplate.value.mcpServers || {}).length
   if (after > before) closeDrawer()
-}
-async function addFromMarket(item: any) {
-  await addMarketMcpToTemplate(item)
 }
 function suggestSearch(q: string) {
   mcpMarketQ.value = q
@@ -93,6 +155,12 @@ async function confirmDeleteFromEdit() {
   await deleteMcpEntry(name)
   if (!mcpTemplate.value.mcpServers?.[name]) closeDrawer()
 }
+
+watch(mcpMarketResults, (list) => {
+  if (!previewItem.value) return
+  const still = list.some((item) => marketItemKey(item) === marketItemKey(previewItem.value))
+  if (!still) clearPreview()
+})
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && drawer.value) {
@@ -237,123 +305,141 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
     </div>
 
     <Teleport to="body">
-      <Transition name="mcp-drawer">
+      <Transition name="mcp-studio">
         <div v-if="drawer" class="drawer-root">
           <div class="drawer-overlay" @click="closeDrawer" />
-          <aside
-            class="drawer-panel"
-            :class="{ wide: drawer === 'add' }"
+
+          <!-- MVP-C：添加 = 三栏目录工作室 -->
+          <div
+            v-if="drawer === 'add'"
+            class="studio"
             role="dialog"
             aria-modal="true"
             aria-labelledby="mcp-drawer-title"
           >
-            <div class="drawer-h">
-              <div>
-                <h3 id="mcp-drawer-title">{{ drawerTitle }}</h3>
-                <p v-if="drawerSub" class="sub">{{ drawerSub }}</p>
+            <aside class="studio-nav">
+              <div class="nav-brand">
+                <b>Catalog</b>
+                <button type="button" class="btn btn-icon btn-ghost" aria-label="关闭" @click="closeDrawer">
+                  <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
               </div>
-              <button type="button" class="btn btn-icon btn-ghost" aria-label="关闭抽屉" @click="closeDrawer">
-                <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
-              </button>
-            </div>
+              <div>
+                <div class="section-label">方式</div>
+                <div class="mode-list">
+                  <button type="button" class="mode" :class="{ on: mcpTab === 'market' }" @click="setAddTab('market')">
+                    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
+                    市场搜索
+                  </button>
+                  <button type="button" class="mode" :class="{ on: mcpTab === 'manual' }" @click="setAddTab('manual')">
+                    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                    手动添加
+                  </button>
+                  <button type="button" class="mode" @click="openDrawer('keys')">
+                    <svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                    密钥
+                  </button>
+                </div>
+              </div>
+              <div v-show="mcpTab === 'market'">
+                <div class="section-label">数据源</div>
+                <div class="src-list" role="group" aria-label="数据源过滤">
+                  <button
+                    v-for="src in MCP_SOURCE_ORDER"
+                    :key="src"
+                    type="button"
+                    class="nav-src"
+                    :class="{ on: isSourceOn(src), locked: src === 'pulsemcp' && !pulseMcpConfigured }"
+                    :data-src="src"
+                    :aria-pressed="isSourceOn(src)"
+                    :title="src === 'pulsemcp' ? (pulseMcpConfigured ? 'PulseMCP（已配置 API Key）' : 'PulseMCP 需 API Key') : undefined"
+                    @click="toggleMarketSource(src)"
+                  >
+                    <span class="box" aria-hidden="true">
+                      <svg v-if="isSourceOn(src)" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>
+                    </span>
+                    {{ MCP_SOURCE_LABELS[src] }}
+                    <span v-if="src === 'pulsemcp'" class="key-badge">Key</span>
+                  </button>
+                </div>
+              </div>
+            </aside>
 
-            <div class="drawer-b">
-              <template v-if="drawer === 'add'">
-                <div class="tabs">
-                  <button type="button" :class="{ on: mcpTab === 'market' }" @click="mcpTab = 'market'">市场搜索</button>
-                  <button type="button" :class="{ on: mcpTab === 'manual' }" @click="mcpTab = 'manual'">手动添加</button>
+            <section class="studio-catalog">
+              <div class="cat-h">
+                <div>
+                  <h3 id="mcp-drawer-title">{{ drawerTitle }}</h3>
+                  <p class="sub">{{ drawerSub }}</p>
+                </div>
+              </div>
+
+              <template v-if="mcpTab === 'market'">
+                <div class="cat-search">
+                  <input
+                    ref="marketInput"
+                    v-model="mcpMarketQ"
+                    placeholder="关键词，如：filesystem、github、地图…"
+                    @keydown.enter="searchMcpMarket"
+                  />
+                  <button type="button" class="btn btn-primary" :disabled="mcpMarketLoading" @click="searchMcpMarket">
+                    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
+                    搜索
+                  </button>
                 </div>
 
-                <div v-show="mcpTab === 'market'">
-                  <div class="agg-search">
-                    <input
-                      ref="marketInput"
-                      v-model="mcpMarketQ"
-                      placeholder="关键词，如：filesystem、github、地图…"
-                      @keydown.enter="searchMcpMarket"
-                    />
-                    <button type="button" class="btn btn-primary" :disabled="mcpMarketLoading" @click="searchMcpMarket">
-                      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
-                      搜索
-                    </button>
+                <div v-if="pulseMcpEnabled" class="pulse-tip" :class="{ ok: pulseMcpConfigured }">
+                  <div class="pulse-tip-text">
+                    <template v-if="pulseMcpConfigured">PulseMCP 已配置 API Key，将使用稳定的 v0.1 接口。</template>
+                    <template v-else>
+                      PulseMCP 需配置 <code>PULSEMCP_API_KEY</code>（可选 <code>PULSEMCP_TENANT_ID</code>）并重启应用。
+                    </template>
                   </div>
-
-                  <div class="src-filters" role="group" aria-label="数据源过滤">
-                    <button
-                      v-for="src in MCP_SOURCE_ORDER"
-                      :key="src"
-                      type="button"
-                      class="src-chip"
-                      :class="{ on: isSourceOn(src), locked: src === 'pulsemcp' && !pulseMcpConfigured }"
-                      :data-src="src"
-                      :aria-pressed="isSourceOn(src)"
-                      :title="src === 'pulsemcp' ? (pulseMcpConfigured ? 'PulseMCP（已配置 API Key）' : 'PulseMCP 需 API Key，点击启用前会提示') : undefined"
-                      @click="toggleMarketSource(src)"
-                    >
-                      <span class="check" aria-hidden="true">
-                        <svg v-if="isSourceOn(src)" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>
-                      </span>
-                      {{ MCP_SOURCE_LABELS[src] }}
-                      <span v-if="src === 'pulsemcp'" class="key-badge" aria-hidden="true">Key</span>
-                    </button>
+                  <div class="pulse-tip-links">
+                    <a :href="PULSEMCP_DOCS_URL" target="_blank" rel="noopener noreferrer">API 文档</a>
+                    <a :href="PULSEMCP_API_URL" target="_blank" rel="noopener noreferrer">申请 / 了解</a>
+                    <a :href="PULSEMCP_MAILTO">邮件申请</a>
                   </div>
+                </div>
 
-                  <div v-if="pulseMcpEnabled" class="pulse-tip" :class="{ ok: pulseMcpConfigured }">
-                    <div class="pulse-tip-text">
-                      <template v-if="pulseMcpConfigured">
-                        PulseMCP 已配置 API Key，将使用稳定的 v0.1 接口。
-                      </template>
-                      <template v-else>
-                        PulseMCP 需配置 <code>PULSEMCP_API_KEY</code>（可选 <code>PULSEMCP_TENANT_ID</code>）并重启应用；未配置时旧接口可能随机失败。
-                      </template>
-                    </div>
-                    <div class="pulse-tip-links">
-                      <a :href="PULSEMCP_DOCS_URL" target="_blank" rel="noopener noreferrer">API 文档</a>
-                      <a :href="PULSEMCP_API_URL" target="_blank" rel="noopener noreferrer">申请 / 了解</a>
-                      <a :href="PULSEMCP_MAILTO">邮件申请</a>
-                    </div>
-                  </div>
-
+                <div class="meta-bar">
+                  <template v-if="mcpMarketLoading"><span>正在并行查询各源…</span></template>
+                  <template v-else-if="mcpSearched">
+                    <span>共 <strong>{{ mcpMarketResults.length }}</strong> 条 · 已跨源去重</span>
+                  </template>
+                  <template v-else>
+                    <span>并行检索已选市场；PulseMCP 默认关闭（需 Key）</span>
+                  </template>
                   <div v-if="mcpSearched && sourceMetaItems.length" class="src-meta">
                     <span
                       v-for="m in sourceMetaItems"
                       :key="m.id"
-                      class="src-meta-item"
                       :class="{ err: !!m.error }"
                       :title="m.error || undefined"
-                    >
-                      {{ m.label }} · <span class="n">{{ m.error ? '失败' : m.count }}</span>
-                    </span>
+                    >{{ m.label }} · {{ m.error ? '失败' : m.count }}</span>
                   </div>
+                </div>
 
-                  <div class="agg-status">
-                    <template v-if="mcpMarketLoading"><span>正在并行查询各源…</span></template>
-                    <template v-else-if="mcpSearched">
-                      <span>共 <strong>{{ mcpMarketResults.length }}</strong> 条（已跨源去重）</span>
-                      <span>标签标明来源</span>
-                    </template>
-                    <template v-else>
-                      <span>并行检索已选市场；PulseMCP 默认关闭（需 Key）</span>
-                    </template>
-                  </div>
-
+                <div class="results">
                   <div v-if="mcpMarketLoading" class="m-loading">
                     <div class="spinner" aria-hidden="true" />
                     聚合搜索中…
                   </div>
                   <div v-else-if="!mcpSearched" class="m-hint">
-                    输入关键词，从多个 MCP 市场一次搜齐。<br />每条结果带<strong>来源标签</strong>。
+                    输入关键词，从多个 MCP 市场一次搜齐。<br />选中结果后在右侧预览配置。
                     <div class="suggest-row">
                       <button v-for="s in SUGGESTS" :key="s" type="button" class="suggest" @click="suggestSearch(s)">{{ s }}</button>
                     </div>
                   </div>
-                  <div v-else-if="!mcpMarketResults.length" class="m-empty">无结果。换个关键词，或调整上方数据源。</div>
-                  <div v-else class="m-list">
+                  <div v-else-if="!mcpMarketResults.length" class="m-empty">无结果。换个关键词，或调整左侧数据源。</div>
+                  <template v-else>
                     <article
                       v-for="s in mcpMarketResults"
-                      :key="(s.source || '') + ':' + s.id"
+                      :key="marketItemKey(s)"
                       class="m-card"
-                      :class="'src-' + String(s.source || '').toLowerCase()"
+                      :class="['from-' + String(s.source || '').toLowerCase(), { sel: isPreviewSelected(s) }]"
+                      tabindex="0"
+                      @click="selectMarketItem(s)"
+                      @keydown.enter.prevent="selectMarketItem(s)"
                     >
                       <div class="m-card-top">
                         <h4 :title="s.name">{{ s.name }}</h4>
@@ -373,104 +459,189 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
                         {{ [s.id, s.author || s.owner].filter(Boolean).join(' · ') || '—' }}
                       </div>
                       <p>{{ s.description || '暂无描述' }}</p>
-                      <div class="btn-cluster">
-                        <button type="button" class="btn btn-secondary btn-sm" @click="getMcpDetail(s)">
-                          <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
-                          查看配置
-                        </button>
-                        <button type="button" class="btn btn-soft btn-sm" @click="addFromMarket(s)">
-                          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-                          添加到已配置
-                        </button>
-                      </div>
                     </article>
+                  </template>
+                </div>
+              </template>
+
+              <template v-else>
+                <div class="results form-pad">
+                  <div class="manual-form">
+                    <div class="field"><label>name *</label><input v-model="mcpForm.name" placeholder="my-mcp" /></div>
+                    <div class="field">
+                      <label>type</label>
+                      <select v-model="mcpForm.type">
+                        <option value="">stdio（默认）</option>
+                        <option value="http">http</option>
+                        <option value="streamableHttp">streamableHttp</option>
+                      </select>
+                    </div>
+                    <div class="field"><label>command</label><input v-model="mcpForm.command" placeholder="npx" /></div>
+                    <div class="field"><label>args</label><input v-model="mcpForm.args" placeholder="-y, package" /></div>
+                    <div class="field full"><label>url</label><input v-model="mcpForm.url" placeholder="http 类型填写" /></div>
+                    <div class="field full"><label>headers</label><textarea v-model="mcpForm.headers" rows="2" placeholder='{"Authorization":"Bearer xxx"}' /></div>
+                    <div class="field full"><label>env</label><textarea v-model="mcpForm.env" rows="2" placeholder='{"API_KEY":"xxx"}' /></div>
+                    <div class="field full"><label>Smithery 粘贴</label><textarea v-model="mcpForm.paste" rows="3" placeholder="粘贴完整 MCP 配置 JSON，自动解析" /></div>
                   </div>
                 </div>
+              </template>
+            </section>
 
-                <div v-show="mcpTab === 'manual'" class="manual-form">
-                  <div class="field"><label>name *</label><input v-model="mcpForm.name" placeholder="my-mcp" /></div>
-                  <div class="field">
-                    <label>type</label>
-                    <select v-model="mcpForm.type">
-                      <option value="">stdio（默认）</option>
+            <aside class="studio-preview">
+              <template v-if="mcpTab === 'manual'">
+                <div class="prev-h">
+                  <div class="eyebrow">手动配置</div>
+                  <h4>{{ mcpForm.name.trim() || '未命名服务' }}</h4>
+                  <div class="id">{{ mcpForm.type || 'stdio' }} · 填写左侧表单后添加</div>
+                </div>
+                <div class="prev-b">
+                  <p class="desc">支持粘贴 Smithery / 完整 mcpServers JSON，点「解析粘贴」自动填入字段。</p>
+                  <div class="kv">
+                    <div><label>Command</label><b>{{ mcpForm.command || '—' }}</b></div>
+                    <div><label>Args</label><b>{{ mcpForm.args || '—' }}</b></div>
+                    <div><label>URL</label><b>{{ mcpForm.url || '—' }}</b></div>
+                  </div>
+                </div>
+                <div class="prev-f">
+                  <div class="row">
+                    <button type="button" class="btn btn-secondary" @click="parsePastedMcp">解析粘贴</button>
+                    <button type="button" class="btn btn-primary" @click="addManualAndMaybeClose">
+                      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                      添加到已配置
+                    </button>
+                  </div>
+                </div>
+              </template>
+
+              <template v-else-if="previewItem">
+                <div class="prev-h">
+                  <div class="eyebrow">配置预览</div>
+                  <h4>{{ previewItem.name || previewItem.id }}</h4>
+                  <div class="id">
+                    {{ previewItem.source_label || previewItem.source || 'market' }}
+                    <template v-if="previewItem.id"> · {{ previewItem.id }}</template>
+                  </div>
+                </div>
+                <div class="prev-b">
+                  <p class="desc">{{ previewItem.description || '暂无描述' }}</p>
+                  <div v-if="previewLoading" class="m-loading compact">
+                    <div class="spinner" aria-hidden="true" />
+                    加载配置…
+                  </div>
+                  <template v-else-if="previewResolved?.cfg">
+                    <p v-if="previewPayload?.install?.resolved_from === 'repo'" class="auto-hint">
+                      已从仓库自动生成配置；如有 Token 占位符，请到「密钥配置」补全。
+                    </p>
+                    <div class="kv">
+                      <div><label>Local name</label><b>{{ previewResolved.key }}</b></div>
+                      <div><label>Type</label><b>{{ previewResolved.cfg.type || (previewResolved.cfg.url ? 'http' : 'stdio') }}</b></div>
+                      <div v-if="previewResolved.cfg.command"><label>Command</label><b>{{ previewResolved.cfg.command }}</b></div>
+                      <div v-if="previewResolved.cfg.args"><label>Args</label><b>{{ (previewResolved.cfg.args || []).join(' ') }}</b></div>
+                      <div v-if="previewResolved.cfg.url"><label>URL</label><b>{{ previewResolved.cfg.url }}</b></div>
+                    </div>
+                    <pre class="code">{{ previewJson }}</pre>
+                  </template>
+                  <div v-else class="m-empty compact">
+                    <p>{{ previewPayload?.install_error || previewResolved?.error || '无法自动生成配置，请改用手动添加' }}</p>
+                    <a
+                      v-if="previewRepoUrl"
+                      class="repo-link"
+                      :href="previewRepoUrl"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >打开仓库</a>
+                    <button type="button" class="btn btn-soft" @click="setAddTab('manual')">改用手动添加</button>
+                  </div>
+                </div>
+                <div class="prev-f">
+                  <div class="row">
+                    <button type="button" class="btn btn-secondary" @click="getMcpDetail(previewItem)">查看完整</button>
+                    <button type="button" class="btn btn-primary" :disabled="!previewCanAdd" @click="addPreviewToConfigured">
+                      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                      添加到已配置
+                    </button>
+                  </div>
+                </div>
+              </template>
+
+              <div v-else class="empty-prev">
+                <p>在中间列表选中一条结果<br />即可在此预览并添加</p>
+              </div>
+            </aside>
+          </div>
+
+          <!-- 编辑 / 密钥：紧凑居中面板 -->
+          <aside
+            v-else
+            class="studio studio-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mcp-drawer-title"
+          >
+            <div class="sm-panel">
+              <div class="cat-h">
+                <div>
+                  <h3 id="mcp-drawer-title">{{ drawerTitle }}</h3>
+                  <p v-if="drawerSub" class="sub">{{ drawerSub }}</p>
+                </div>
+                <button type="button" class="btn btn-icon btn-ghost" aria-label="关闭" @click="closeDrawer">
+                  <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+              </div>
+              <div class="sm-body">
+                <template v-if="drawer === 'edit'">
+                  <div class="field"><label>type</label>
+                    <select v-model="editMcpForm.type">
+                      <option value="">stdio</option>
                       <option value="http">http</option>
                       <option value="streamableHttp">streamableHttp</option>
                     </select>
                   </div>
-                  <div class="field"><label>command</label><input v-model="mcpForm.command" placeholder="npx" /></div>
-                  <div class="field"><label>args</label><input v-model="mcpForm.args" placeholder="-y, package" /></div>
-                  <div class="field full"><label>url</label><input v-model="mcpForm.url" placeholder="http 类型填写" /></div>
-                  <div class="field full"><label>headers</label><textarea v-model="mcpForm.headers" rows="2" placeholder='{"Authorization":"Bearer xxx"}' /></div>
-                  <div class="field full"><label>env</label><textarea v-model="mcpForm.env" rows="2" placeholder='{"API_KEY":"xxx"}' /></div>
-                  <div class="field full"><label>Smithery 粘贴</label><textarea v-model="mcpForm.paste" rows="3" placeholder="粘贴完整 MCP 配置 JSON，自动解析" /></div>
-                </div>
-              </template>
-
-              <template v-else-if="drawer === 'edit'">
-                <div class="field">
-                  <label>type</label>
-                  <select v-model="editMcpForm.type">
-                    <option value="">stdio</option>
-                    <option value="http">http</option>
-                    <option value="streamableHttp">streamableHttp</option>
-                  </select>
-                </div>
-                <div class="field"><label>command</label><input v-model="editMcpForm.command" /></div>
-                <div class="field"><label>args</label><input v-model="editMcpForm.args" placeholder="逗号分隔" /></div>
-                <div class="field"><label>url</label><input v-model="editMcpForm.url" /></div>
-                <div class="field"><label>headers</label><textarea v-model="editMcpForm.headers" rows="3" /></div>
-                <div class="field"><label>env</label><textarea v-model="editMcpForm.env" rows="3" /></div>
-                <div class="danger-zone">
-                  <button type="button" class="btn btn-danger-outline" @click="confirmDeleteFromEdit">
-                    <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
-                    删除此服务
-                  </button>
-                </div>
-              </template>
-
-              <template v-else-if="drawer === 'keys'">
-                <p class="keys-hint">MCP 服务密钥 / Token，生成 mcp.json 时替换 <code v-pre>${KEY}</code> 占位符。</p>
-                <div class="keys-list">
-                  <div v-for="(_, k) in (mcpConfigData.mcp || {})" :key="k" class="key-row">
-                    <code :title="String(k)">{{ k }}</code>
-                    <input v-model="mcpConfigData.mcp[k]" type="password" />
-                    <button type="button" class="btn btn-danger btn-icon btn-sm" :aria-label="'删除 ' + k" @click="deleteMcpConfigKey(String(k))">
+                  <div class="field"><label>command</label><input v-model="editMcpForm.command" /></div>
+                  <div class="field"><label>args</label><input v-model="editMcpForm.args" placeholder="逗号分隔" /></div>
+                  <div class="field"><label>url</label><input v-model="editMcpForm.url" /></div>
+                  <div class="field"><label>headers</label><textarea v-model="editMcpForm.headers" rows="3" /></div>
+                  <div class="field"><label>env</label><textarea v-model="editMcpForm.env" rows="3" /></div>
+                  <div class="danger-zone">
+                    <button type="button" class="btn btn-danger-outline" @click="confirmDeleteFromEdit">
                       <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                      删除此服务
                     </button>
                   </div>
-                  <div v-if="!mcpKeyCount" class="m-empty">暂无密钥，点击下方添加。</div>
+                </template>
+                <template v-else-if="drawer === 'keys'">
+                  <p class="keys-hint">MCP 服务密钥 / Token，生成 mcp.json 时替换 <code v-pre>${KEY}</code> 占位符。</p>
+                  <div class="keys-list">
+                    <div v-for="(_, k) in (mcpConfigData.mcp || {})" :key="k" class="key-row">
+                      <code :title="String(k)">{{ k }}</code>
+                      <input v-model="mcpConfigData.mcp[k]" type="password" />
+                      <button type="button" class="btn btn-danger btn-icon btn-sm" :aria-label="'删除 ' + k" @click="deleteMcpConfigKey(String(k))">
+                        <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+                      </button>
+                    </div>
+                    <div v-if="!mcpKeyCount" class="m-empty">暂无密钥，点击下方添加。</div>
+                  </div>
+                </template>
+              </div>
+              <div class="prev-f">
+                <div class="row" v-if="drawer === 'edit'">
+                  <button type="button" class="btn btn-secondary" @click="closeDrawer">取消</button>
+                  <button type="button" class="btn btn-primary" @click="saveEditAndClose">
+                    <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+                    保存更改
+                  </button>
                 </div>
-              </template>
-            </div>
-
-            <div class="drawer-f">
-              <template v-if="drawer === 'add' && mcpTab === 'market'">
-                <button type="button" class="btn btn-secondary" @click="closeDrawer">关闭</button>
-              </template>
-              <template v-else-if="drawer === 'add' && mcpTab === 'manual'">
-                <button type="button" class="btn btn-secondary" @click="parsePastedMcp">解析粘贴</button>
-                <button type="button" class="btn btn-primary" @click="addManualAndMaybeClose">
-                  <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-                  添加到已配置
-                </button>
-              </template>
-              <template v-else-if="drawer === 'edit'">
-                <button type="button" class="btn btn-secondary" @click="closeDrawer">取消</button>
-                <button type="button" class="btn btn-primary" @click="saveEditAndClose">
-                  <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
-                  保存更改
-                </button>
-              </template>
-              <template v-else-if="drawer === 'keys'">
-                <button type="button" class="btn btn-soft" @click="addMcpConfigKey">
-                  <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-                  添加 Key
-                </button>
-                <button type="button" class="btn btn-primary" @click="saveMcpConfig">
-                  <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
-                  保存
-                </button>
-              </template>
+                <div class="row" v-else>
+                  <button type="button" class="btn btn-soft" @click="addMcpConfigKey">
+                    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                    添加 Key
+                  </button>
+                  <button type="button" class="btn btn-primary" @click="saveMcpConfig">
+                    <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+                    保存
+                  </button>
+                </div>
+              </div>
             </div>
           </aside>
         </div>
@@ -622,141 +793,174 @@ tr:hover .ops { background: #f7f8fa; }
 .keys-bar h2 { margin: 0 0 2px; font-size: 14px; color: #1f2329; }
 .keys-bar p { margin: 0; font-size: 12px; color: #86909c; }
 
-.drawer-root { position: fixed; inset: 0; z-index: 60; }
-.drawer-overlay { position: absolute; inset: 0; background: rgba(31,35,41,.36); }
-.drawer-panel {
-  position: absolute; top: 0; right: 0; width: min(440px, 100%); height: 100%; background: #fff;
-  box-shadow: -8px 0 32px rgba(0,0,0,.12); display: flex; flex-direction: column;
+.drawer-root {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; box-sizing: border-box;
 }
-.drawer-panel.wide { width: min(560px, 100%); }
-.drawer-h {
-  padding: 18px 20px 16px; border-bottom: 1px solid #e5e6eb;
-  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
-}
-.drawer-h h3 { margin: 0 0 4px; font-size: 15px; font-weight: 650; color: #1f2329; }
-.drawer-h .sub { margin: 0; font-size: 12px; color: #86909c; line-height: 1.4; }
-.drawer-b { flex: 1; overflow: auto; padding: 18px 20px; }
-.drawer-f {
-  padding: 14px 20px; border-top: 1px solid #e5e6eb;
-  display: flex; gap: 8px; justify-content: flex-end; background: #f7f8fa;
-}
+.drawer-overlay { position: absolute; inset: 0; background: rgba(31,35,41,.4); }
 
-.tabs { display: flex; gap: 4px; margin-bottom: 14px; background: #f7f8fa; padding: 3px; border-radius: 10px; }
-.tabs button {
-  flex: 1; height: 32px; border-radius: 8px; font-size: 12px; font-weight: 600;
-  color: #86909c; border: none; background: transparent; cursor: pointer;
+.studio {
+  position: relative; z-index: 1;
+  width: min(980px, 100%); height: min(640px, calc(100vh - 48px));
+  background: #fff; border-radius: 18px;
+  box-shadow: 0 28px 72px rgba(15,20,30,.28);
+  display: flex; align-items: stretch; overflow: hidden;
 }
-.tabs button.on { background: #fff; color: #0e42d2; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
-
-.agg-search { display: flex; gap: 8px; margin-bottom: 12px; }
-.agg-search input {
-  flex: 1; height: 40px; border: 1px solid #c9cdd4; border-radius: 10px; padding: 0 12px; font-size: 13px;
+.studio-sm {
+  width: min(480px, 100%); height: auto; max-height: min(86vh, 720px);
+  display: flex; flex-direction: column;
 }
-.agg-search .btn { height: 40px; padding: 0 14px; border-radius: 10px; }
-
-.src-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.src-chip {
-  height: 30px; padding: 0 12px 0 8px; border-radius: 999px; font-size: 12px; font-weight: 650;
-  border: 1.5px solid #e5e6eb; background: #fff; color: #86909c;
-  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-  transition: background .15s ease, color .15s ease, border-color .15s ease, box-shadow .15s ease;
+.sm-panel { display: flex; flex-direction: column; min-height: 0; flex: 1; width: 100%; }
+.sm-body { flex: 1; overflow: auto; padding: 16px 18px; min-height: 0; }
+.studio-nav {
+  width: 180px; flex: 0 0 180px;
+  background: linear-gradient(180deg, #f7f9fd, #eef3fb);
+  border-right: 1px solid #e5e6eb;
+  padding: 14px 12px; display: flex; flex-direction: column; gap: 14px;
+  overflow: auto; min-height: 0; z-index: 2;
 }
-.src-chip .check {
-  width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0;
-  display: grid; place-items: center;
-  border: 1.5px solid #c9cdd4; background: #fff;
-  transition: background .15s ease, border-color .15s ease;
+.studio-catalog {
+  flex: 1 1 0%;
+  min-width: 260px; min-height: 0;
+  display: flex; flex-direction: column;
+  background: #fff; overflow: hidden; z-index: 1;
 }
-.src-chip .check svg {
-  width: 10px; height: 10px; stroke: #fff; fill: none; stroke-width: 3;
-  stroke-linecap: round; stroke-linejoin: round;
+.studio-preview {
+  width: 280px; flex: 0 0 280px;
+  border-left: 1px solid #e5e6eb;
+  background: linear-gradient(180deg, #fafbfd, #f3f6fb);
+  display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; z-index: 2;
 }
-.src-chip:hover:not(.on) {
-  border-color: #c9cdd4; color: #4e5969; background: #f7f8fa;
+.nav-brand {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px 4px;
 }
-/* 选中：实心填充 + 白字 + 勾选，一眼可辨 */
-.src-chip.on {
-  color: #fff;
-  box-shadow: 0 1px 2px rgba(31, 35, 41, 0.12);
+.nav-brand b {
+  font-size: 12px; font-weight: 700; color: #0e42d2; letter-spacing: .04em; text-transform: uppercase;
 }
-.src-chip.on .check {
-  border-color: rgba(255, 255, 255, 0.35);
-  background: rgba(255, 255, 255, 0.22);
+.section-label {
+  font-size: 10px; font-weight: 700; color: #86909c;
+  letter-spacing: .06em; text-transform: uppercase; padding: 0 6px; margin-bottom: 6px;
 }
-.src-chip[data-src="registry"].on { background: #165dff; border-color: #165dff; }
-.src-chip[data-src="smithery"].on { background: #722ed1; border-color: #722ed1; }
-.src-chip[data-src="modelscope"].on { background: #00b42a; border-color: #00b42a; }
-.src-chip[data-src="pulsemcp"].on { background: #ff7d00; border-color: #ff7d00; }
-.src-chip[data-src="glama"].on { background: #4e5969; border-color: #4e5969; }
-.src-chip.on:hover { filter: brightness(1.05); }
-.src-chip .key-badge {
-  font-size: 9px; font-weight: 800; letter-spacing: 0.02em;
-  padding: 1px 5px; border-radius: 999px; line-height: 1.2;
+.mode-list { display: flex; flex-direction: column; gap: 4px; }
+.mode {
+  height: 34px; border: none; border-radius: 9px; background: transparent;
+  font-size: 12px; font-weight: 600; color: #4e5969;
+  display: flex; align-items: center; gap: 8px; padding: 0 10px; cursor: pointer; text-align: left;
+  transition: background .15s, color .15s;
+}
+.mode svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .7; }
+.mode:hover { background: rgba(22,93,255,.06); color: #0e42d2; }
+.mode.on { background: #fff; color: #0e42d2; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.mode.on svg { opacity: 1; }
+.src-list { display: flex; flex-direction: column; gap: 4px; }
+.nav-src {
+  height: 30px; border-radius: 8px; border: 1px solid transparent; background: transparent;
+  font-size: 11px; font-weight: 600; color: #86909c;
+  display: flex; align-items: center; gap: 8px; padding: 0 8px; cursor: pointer; text-align: left;
+}
+.nav-src .box {
+  width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid #c9cdd4;
+  display: grid; place-items: center; background: #fff; flex-shrink: 0;
+}
+.nav-src .box svg { width: 9px; height: 9px; stroke: #fff; fill: none; stroke-width: 3; }
+.nav-src.on { color: #1f2329; background: rgba(255,255,255,.7); }
+.nav-src.on .box { background: #165dff; border-color: #165dff; }
+.nav-src[data-src="smithery"].on .box { background: #722ed1; border-color: #722ed1; }
+.nav-src[data-src="modelscope"].on .box { background: #00b42a; border-color: #00b42a; }
+.nav-src[data-src="pulsemcp"].on .box { background: #ff7d00; border-color: #ff7d00; }
+.nav-src[data-src="glama"].on .box { background: #4e5969; border-color: #4e5969; }
+.nav-src.locked:not(.on) { border-style: dashed; border-color: #e5e6eb; }
+.nav-src .key-badge {
+  margin-left: auto; font-size: 9px; font-weight: 800; padding: 1px 5px; border-radius: 999px;
   background: #fff7e8; color: #ff7d00; border: 1px solid #ffe0b3;
 }
-.src-chip.on .key-badge {
-  background: rgba(255,255,255,0.22); color: #fff; border-color: rgba(255,255,255,0.35);
-}
-.src-chip.locked:not(.on) { border-style: dashed; }
 
-.pulse-tip {
-  display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 12px;
-  margin: -4px 0 12px; padding: 10px 12px; border-radius: 10px;
-  background: #fff7e8; border: 1px solid #ffe0b3; color: #ad4e00;
-  font-size: 12px; line-height: 1.5;
+.cat-h {
+  padding: 14px 16px 10px; border-bottom: 1px solid #e5e6eb;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
 }
-.pulse-tip.ok {
-  background: #e8ffea; border-color: #b7f0c0; color: #008026;
+.cat-h h3 { margin: 0 0 4px; font-size: 15px; font-weight: 700; color: #1f2329; }
+.cat-h .sub { margin: 0; font-size: 12px; color: #86909c; line-height: 1.4; }
+.cat-search { margin: 12px 16px 0; display: flex; gap: 8px; }
+.cat-search input {
+  flex: 1; height: 38px; border: 1.5px solid #c9cdd4; border-radius: 10px;
+  padding: 0 12px; font-size: 13px; background: #fff;
 }
-.pulse-tip-text { flex: 1; min-width: 180px; }
-.pulse-tip-text code {
-  font-size: 11px; padding: 0 4px; border-radius: 4px;
-  background: rgba(0,0,0,0.06); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+.cat-search input:focus {
+  outline: none; border-color: #165dff; box-shadow: 0 0 0 3px rgba(22,93,255,.15);
 }
-.pulse-tip-links { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.pulse-tip-links a {
-  color: inherit; font-weight: 650; text-decoration: underline; text-underline-offset: 2px;
-}
-.pulse-tip-links a:hover { opacity: 0.85; }
-
-.src-meta {
-  display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px;
-  padding: 8px 10px; border-radius: 10px; background: #f7f8fa;
-}
-.src-meta-item {
-  font-size: 11px; color: #4e5969; display: inline-flex; align-items: center; gap: 4px;
-  padding: 2px 8px; border-radius: 6px; background: #fff; border: 1px solid #e5e6eb;
-}
-.src-meta-item.err { color: var(--red); border-color: var(--red-border); background: var(--red-bg); }
-.src-meta-item .n { font-weight: 700; font-variant-numeric: tabular-nums; color: #1f2329; }
-.src-meta-item.err .n { color: var(--red); }
-.agg-status {
-  font-size: 12px; color: #86909c; margin-bottom: 10px;
+.cat-search .btn { height: 38px; border-radius: 10px; padding: 0 14px; }
+.meta-bar {
   display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  padding: 10px 16px; font-size: 11px; color: #86909c;
 }
-.agg-status strong { color: #1f2329; font-weight: 650; }
+.meta-bar strong { color: #1f2329; }
+.src-meta { display: flex; flex-wrap: wrap; gap: 4px; }
+.src-meta span {
+  padding: 2px 7px; border-radius: 6px; background: #f7f8fa; border: 1px solid #e5e6eb; font-weight: 600;
+}
+.src-meta span.err { color: var(--red); border-color: var(--red-border); background: var(--red-bg); }
 
-.m-list { display: grid; gap: 10px; }
-.m-card {
-  border: 1px solid #e5e6eb; border-radius: 12px; padding: 12px 12px 12px 14px;
-  position: relative; overflow: hidden; transition: border-color .15s, box-shadow .15s;
+.results {
+  flex: 1 1 0%; min-height: 0; min-width: 0;
+  overflow-x: hidden; overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 20px 20px;
+  display: flex; flex-direction: column; gap: 10px;
+  align-items: stretch;
+  box-sizing: border-box;
 }
-.m-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: #c9cdd4; }
-.m-card.src-registry::before { background: #165dff; }
-.m-card.src-smithery::before { background: #722ed1; }
-.m-card.src-modelscope::before { background: #00b42a; }
-.m-card.src-pulsemcp::before { background: #ff7d00; }
-.m-card.src-glama::before { background: #4e5969; }
-.m-card:hover { border-color: #d9e6ff; box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06); }
-.m-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
-.m-card h4 { margin: 0; font-size: 13px; font-weight: 650; line-height: 1.3; min-width: 0; word-break: break-word; color: #1f2329; }
-.m-tags { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; flex-shrink: 0; }
+.results.form-pad { padding: 12px 20px 20px; overflow-y: auto; }
+.m-card {
+  border: 1px solid #e5e6eb;
+  border-left: 3px solid #c9cdd4;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #fff;
+  width: 100%; max-width: 100%;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  cursor: pointer;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.m-card.from-registry { border-left-color: #165dff; }
+.m-card.from-smithery { border-left-color: #722ed1; }
+.m-card.from-modelscope { border-left-color: #00b42a; }
+.m-card.from-pulsemcp { border-left-color: #ff7d00; }
+.m-card.from-glama { border-left-color: #4e5969; }
+.m-card:hover {
+  border-top-color: #d9e6ff;
+  border-right-color: #d9e6ff;
+  border-bottom-color: #d9e6ff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06);
+}
+.m-card.sel {
+  border-color: #165dff;
+  background: #eef4ff;
+  outline: 2px solid rgba(22,93,255,.28);
+  outline-offset: 1px;
+}
+.m-card.sel.from-registry { border-left-color: #165dff; }
+.m-card.sel.from-smithery { border-left-color: #722ed1; }
+.m-card.sel.from-modelscope { border-left-color: #00b42a; }
+.m-card.sel.from-pulsemcp { border-left-color: #ff7d00; }
+.m-card.sel.from-glama { border-left-color: #4e5969; }
+.m-card-top {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
+  margin-bottom: 6px; min-width: 0;
+}
+.m-card h4 {
+  margin: 0; font-size: 13px; font-weight: 650; line-height: 1.3;
+  flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; word-break: break-word; color: #1f2329;
+}
+.m-tags { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; flex: 0 1 auto; max-width: 46%; }
 .src-tag {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 999px;
   border: 1px solid transparent; white-space: nowrap;
 }
-.src-tag .dot { width: 5px; height: 5px; border-radius: 50%; }
+.src-tag .dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
 .src-tag.registry { background: #eef4ff; color: #0e42d2; border-color: #d9e6ff; }
 .src-tag.registry .dot { background: #165dff; }
 .src-tag.smithery { background: #f5e8ff; color: #722ed1; border-color: #e6d0ff; }
@@ -769,20 +973,88 @@ tr:hover .ops { background: #f7f8fa; }
 .src-tag.glama .dot { background: #4e5969; }
 .host-tag {
   font-size: 10px; font-weight: 700; padding: 3px 7px; border-radius: 999px;
-  background: #e8ffea; color: #00b42a; border: 1px solid #b7ebc4;
+  background: #e8ffea; color: #00b42a; border: 1px solid #b7ebc4; white-space: nowrap;
 }
 .m-card .meta {
   font-size: 11px; color: #86909c; margin-bottom: 6px;
   font-family: 'JetBrains Mono', Consolas, monospace;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
 .m-card p {
-  margin: 0 0 10px; font-size: 12px; color: #4e5969; line-height: 1.45;
+  margin: 0; font-size: 12px; color: #4e5969; line-height: 1.45;
   display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
+
+.prev-h { padding: 16px 16px 12px; border-bottom: 1px solid #e5e6eb; }
+.prev-h .eyebrow {
+  font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: #165dff; margin-bottom: 6px;
+}
+.prev-h h4 { margin: 0 0 6px; font-size: 15px; font-weight: 700; line-height: 1.25; word-break: break-word; }
+.prev-h .id { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 11px; color: #86909c; }
+.prev-b { flex: 1; overflow: auto; padding: 14px 16px; }
+.desc { font-size: 13px; line-height: 1.55; color: #4e5969; margin: 0 0 14px; }
+.auto-hint {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #eef4ff;
+  color: #0e42d2;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.kv { display: grid; gap: 10px; margin-bottom: 14px; }
+.kv div {
+  background: #fff; border: 1px solid #e5e6eb; border-radius: 10px; padding: 10px 12px;
+}
+.kv label {
+  display: block; font-size: 10px; font-weight: 700; color: #86909c;
+  letter-spacing: .04em; text-transform: uppercase; margin-bottom: 4px;
+}
+.kv b { font-size: 12px; font-weight: 600; color: #1f2329; word-break: break-word; }
+.code {
+  font-family: 'JetBrains Mono', Consolas, monospace; font-size: 11px; line-height: 1.5;
+  background: #1f2329; color: #d7e3ff; border-radius: 10px; padding: 12px; overflow: auto; margin: 0;
+  white-space: pre-wrap; word-break: break-word;
+}
+.prev-f {
+  padding: 12px 16px; border-top: 1px solid #e5e6eb;
+  background: rgba(255,255,255,.7);
+}
+.prev-f .row { display: flex; gap: 8px; }
+.prev-f .btn { flex: 1; }
+.empty-prev {
+  flex: 1; display: grid; place-items: center; text-align: center;
+  padding: 24px; color: #86909c; font-size: 13px; line-height: 1.5;
+}
+
+.pulse-tip {
+  display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 12px;
+  margin: 10px 16px 0; padding: 10px 12px; border-radius: 10px;
+  background: #fff7e8; border: 1px solid #ffe0b3; color: #ad4e00;
+  font-size: 12px; line-height: 1.5;
+}
+.pulse-tip.ok { background: #e8ffea; border-color: #b7f0c0; color: #008026; }
+.pulse-tip-text { flex: 1; min-width: 160px; }
+.pulse-tip-text code {
+  font-size: 11px; padding: 0 4px; border-radius: 4px; background: rgba(0,0,0,.06);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.pulse-tip-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.pulse-tip-links a { color: inherit; font-weight: 650; text-decoration: underline; text-underline-offset: 2px; }
+
 .m-empty, .m-loading, .m-hint {
   text-align: center; padding: 36px 16px; color: #86909c; font-size: 13px; line-height: 1.5;
 }
+.m-empty.compact, .m-loading.compact { padding: 20px 8px; }
+.m-empty.compact {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.m-empty.compact p { margin: 0; }
+.m-empty .repo-link {
+  color: #165dff; font-size: 12px; font-weight: 600; text-decoration: none;
+}
+.m-empty .repo-link:hover { text-decoration: underline; }
 .m-loading { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .spinner {
   width: 22px; height: 22px; border: 2.5px solid #d9e6ff; border-top-color: #165dff;
@@ -805,6 +1077,9 @@ tr:hover .ops { background: #f7f8fa; }
   width: 100%; border: 1px solid #c9cdd4; border-radius: 8px; padding: 9px 11px; font-size: 13px;
   background: #fff; color: #1f2329;
 }
+.field input:focus, .field select:focus, .field textarea:focus {
+  outline: none; border-color: #165dff; box-shadow: 0 0 0 3px rgba(22,93,255,.15);
+}
 .field textarea { font-family: 'JetBrains Mono', Consolas, monospace; resize: vertical; min-height: 72px; }
 .danger-zone { margin-top: 8px; padding-top: 14px; border-top: 1px solid #e5e6eb; }
 .keys-hint { margin: 0 0 14px; font-size: 12px; color: #86909c; line-height: 1.5; }
@@ -819,23 +1094,42 @@ tr:hover .ops { background: #f7f8fa; }
   font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px;
 }
 
-.mcp-drawer-enter-active, .mcp-drawer-leave-active { transition: opacity .2s ease; }
-.mcp-drawer-enter-active .drawer-panel, .mcp-drawer-leave-active .drawer-panel {
-  transition: transform .22s ease-out;
+.mcp-studio-enter-active, .mcp-studio-leave-active { transition: opacity .2s ease; }
+.mcp-studio-enter-active .studio, .mcp-studio-leave-active .studio {
+  transition: transform .22s ease-out, opacity .22s ease-out;
 }
-.mcp-drawer-enter-from, .mcp-drawer-leave-to { opacity: 0; }
-.mcp-drawer-enter-from .drawer-panel, .mcp-drawer-leave-to .drawer-panel { transform: translateX(100%); }
+.mcp-studio-enter-from, .mcp-studio-leave-to { opacity: 0; }
+.mcp-studio-enter-from .studio, .mcp-studio-leave-to .studio {
+  transform: translateY(8px) scale(.98); opacity: 0;
+}
 
 @media (max-width: 900px) {
   .kpis { grid-template-columns: 1fr 1fr; }
   .cmd { max-width: 160px; }
   .manual-form { grid-template-columns: 1fr; }
   .key-row { grid-template-columns: 1fr; }
+  .drawer-root { padding: 12px; align-items: stretch; }
+  .studio {
+    width: 100%; height: min(92vh, 760px);
+    flex-direction: column;
+  }
+  .studio-nav {
+    width: 100%; flex: 0 0 auto;
+    flex-direction: row; flex-wrap: wrap; align-items: flex-start;
+    border-right: none; border-bottom: 1px solid #e5e6eb; gap: 10px;
+    max-height: 160px;
+  }
+  .mode-list, .src-list { flex-direction: row; flex-wrap: wrap; }
+  .studio-catalog { flex: 1 1 0%; min-height: 0; }
+  .studio-preview {
+    width: 100%; flex: 0 0 auto; max-height: 38%;
+    border-left: none; border-top: 1px solid #e5e6eb;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .btn, .switch, .switch::after, .spinner,
-  .mcp-drawer-enter-active, .mcp-drawer-leave-active,
-  .mcp-drawer-enter-active .drawer-panel, .mcp-drawer-leave-active .drawer-panel {
+  .mcp-studio-enter-active, .mcp-studio-leave-active,
+  .mcp-studio-enter-active .studio, .mcp-studio-leave-active .studio {
     transition: none !important; animation: none !important;
   }
 }

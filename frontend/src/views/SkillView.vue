@@ -28,11 +28,21 @@ const drawerOpen = ref(false)
 const marketInput = ref<HTMLInputElement | null>(null)
 const localFilterInput = ref<HTMLInputElement | null>(null)
 const manualInput = ref<HTMLInputElement | null>(null)
+const previewItem = ref<any>(null)
+const filterPanelOpen = ref(false)
+/** 高级筛选：多选来源（空 = 全部） */
+const filterSources = ref<SkillSourceId[]>([])
+/** 结果内二次关键词 */
+const filterQuery = ref('')
+type SkillSortBy = 'name' | 'heat'
+type SkillSortDir = 'asc' | 'desc'
+const sortBy = ref<SkillSortBy>('heat')
+const sortDir = ref<SkillSortDir>('desc')
 
 const SUGGESTS = ['react', '设计', 'API', 'testing', 'docx']
 
 const drawerSub = computed(() => {
-  if (skillTab.value === 'market') return '多源聚合 · skills.sh / Smithery / ModelScope / SkillsMP / ClawHub / Anthropic / GitHub'
+  if (skillTab.value === 'market') return '选中技能后，右侧预览可直接安装'
   if (skillTab.value === 'local') return '本地预置（template + config + .agents 三源合并）'
   return '先解析仓库技能，再勾选安装'
 })
@@ -41,7 +51,6 @@ const manualSelectedCount = computed(() => manualSelected.value.length)
 const manualCanInstall = computed(() => !!manualPreview.value && manualSelectedCount.value > 0)
 
 watch(() => manualSkillInput.value, () => {
-  // 源变更后清空旧预览，避免装错包
   if (manualPreview.value) clearManualPreview()
 })
 
@@ -58,10 +67,107 @@ const sourceMetaItems = computed(() => {
         error: info.error || '',
       }
     })
+    // 不展示失败源；无结果的源也不占位
+    .filter((m) => !m.error && m.count > 0)
 })
+
+const filterActive = computed(() => {
+  return filterSources.value.length > 0 || !!filterQuery.value.trim()
+})
+
+function skillHeat(s: any): number {
+  const n = Number(s?.install_count)
+  return Number.isFinite(n) ? n : -1
+}
+
+function skillNameKey(s: any): string {
+  return String(s?.name || s?.skill_name || '').trim()
+}
+
+function compareSkills(a: any, b: any): number {
+  let cmp = 0
+  if (sortBy.value === 'heat') {
+    cmp = skillHeat(a) - skillHeat(b)
+  }
+  if (cmp === 0) {
+    cmp = skillNameKey(a).localeCompare(skillNameKey(b), undefined, {
+      sensitivity: 'base',
+      numeric: true,
+    })
+  }
+  if (cmp === 0) {
+    cmp = skillItemKey(a).localeCompare(skillItemKey(b))
+  }
+  // 比较器绝不能返回 NaN，否则浏览器排序会乱序
+  if (!Number.isFinite(cmp)) cmp = 0
+  return sortDir.value === 'asc' ? cmp : -cmp
+}
+
+const displayedSkillResults = computed(() => {
+  let list = (skillSearchResults.value || []).slice()
+  if (filterSources.value.length) {
+    const set = new Set(filterSources.value.map(String))
+    list = list.filter((s) => set.has(String(s.source || '')))
+  }
+  const q = filterQuery.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter((s) => {
+      const blob = [s.name, s.author, s.description, s.install_command, s.source_label, s.source]
+        .map((x) => String(x || '').toLowerCase())
+        .join(' ')
+      return blob.includes(q)
+    })
+  }
+  // 依赖 sortBy / sortDir，确保切换升序降序必重算
+  void sortBy.value
+  void sortDir.value
+  list.sort(compareSkills)
+  return list
+})
+
+const displayedSkillCount = computed(() => displayedSkillResults.value.length)
 
 function isSourceOn(src: SkillSourceId) {
   return skillMarketSources.value.includes(src)
+}
+
+function isFilterSourceOn(src: SkillSourceId) {
+  return filterSources.value.includes(src)
+}
+
+function toggleFilterSource(src: SkillSourceId) {
+  if (filterSources.value.includes(src)) {
+    filterSources.value = filterSources.value.filter((s) => s !== src)
+  } else {
+    filterSources.value = [...filterSources.value, src]
+  }
+}
+
+function resetAdvancedFilter() {
+  filterSources.value = []
+  filterQuery.value = ''
+  sortBy.value = 'heat'
+  sortDir.value = 'desc'
+}
+
+function setSortBy(by: SkillSortBy) {
+  if (sortBy.value === by) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+    return
+  }
+  sortBy.value = by
+  sortDir.value = by === 'name' ? 'asc' : 'desc'
+}
+
+function setSortDir(dir: SkillSortDir) {
+  sortDir.value = dir
+}
+
+async function runSkillSearch() {
+  resetAdvancedFilter()
+  filterPanelOpen.value = false
+  clearPreview()
+  await searchSkills()
 }
 
 function sourceTagClass(source: string) {
@@ -72,8 +178,52 @@ function sourceLabel(s: any) {
   return s.source_label || SKILL_SOURCE_LABELS[s.source as SkillSourceId] || s.source || 'market'
 }
 
+function skillItemKey(s: any) {
+  if (s?.skill_name) return 'local:' + s.skill_name
+  return String(s?.source || '') + ':' + String(s?.name || '') + ':' + String(s?.install_command || '')
+}
+
+function isPreviewSelected(s: any) {
+  return !!previewItem.value && skillItemKey(previewItem.value) === skillItemKey(s)
+}
+
+function clearPreview() {
+  previewItem.value = null
+}
+
+function selectSkillItem(s: any) {
+  if (s.skill_name) {
+    previewItem.value = {
+      source: 'local',
+      name: s.skill_name,
+      description: s.description,
+      category: s.category,
+      install_command: '',
+      skill_name: s.skill_name,
+    }
+    return
+  }
+  previewItem.value = s
+}
+
+async function installPreview() {
+  if (!previewItem.value) return
+  await installFromSearch(previewItem.value)
+}
+
+async function setSkillTab(tab: 'market' | 'local' | 'manual') {
+  skillTab.value = tab
+  clearPreview()
+  if (tab === 'local') await loadLocalSkills()
+  await nextTick()
+  if (tab === 'market') marketInput.value?.focus()
+  else if (tab === 'local') localFilterInput.value?.focus()
+  else manualInput.value?.focus()
+}
+
 async function openDrawer(tab: 'market' | 'local' | 'manual' = 'market') {
   skillTab.value = tab
+  clearPreview()
   if (tab === 'local') await loadLocalSkills()
   drawerOpen.value = true
   await nextTick()
@@ -83,6 +233,7 @@ async function openDrawer(tab: 'market' | 'local' | 'manual' = 'market') {
 }
 
 function closeDrawer() {
+  clearPreview()
   drawerOpen.value = false
 }
 
@@ -102,8 +253,19 @@ async function refreshInstalled() {
 
 function suggestSearch(q: string) {
   skillSearchQ.value = q
-  searchSkills()
+  runSkillSearch()
 }
+
+watch([displayedSkillResults, filteredLocalSkills], () => {
+  if (!previewItem.value) return
+  if (skillTab.value === 'market') {
+    const still = displayedSkillResults.value.some((s) => skillItemKey(s) === skillItemKey(previewItem.value))
+    if (!still) clearPreview()
+  } else if (skillTab.value === 'local') {
+    const still = filteredLocalSkills.value.some((s) => skillItemKey(s) === skillItemKey(previewItem.value))
+    if (!still) clearPreview()
+  }
+})
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && drawerOpen.value) {
@@ -239,278 +401,417 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
     </div>
 
     <Teleport to="body">
-      <Transition name="skill-drawer">
+      <Transition name="skill-studio">
         <div v-if="drawerOpen" class="drawer-root">
           <div class="drawer-overlay" @click="closeDrawer" />
-          <aside
-            class="drawer-panel wide"
+          <div
+            class="studio"
             role="dialog"
             aria-modal="true"
             aria-labelledby="skill-drawer-title"
           >
-            <div class="drawer-h">
+            <aside class="studio-nav">
+              <div class="nav-brand">
+                <b>Catalog</b>
+                <button type="button" class="btn btn-icon btn-ghost" aria-label="关闭" @click="closeDrawer">
+                  <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                </button>
+              </div>
               <div>
-                <h3 id="skill-drawer-title">添加技能</h3>
-                <p class="sub">{{ drawerSub }}</p>
-              </div>
-              <button type="button" class="btn btn-icon btn-ghost" aria-label="关闭抽屉" @click="closeDrawer">
-                <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
-              </button>
-            </div>
-
-            <div class="drawer-b">
-              <div class="tabs">
-                <button type="button" :class="{ on: skillTab === 'market' }" @click="skillTab = 'market'">市场搜索</button>
-                <button type="button" :class="{ on: skillTab === 'local' }" @click="skillTab = 'local'; loadLocalSkills()">本地预置</button>
-                <button type="button" :class="{ on: skillTab === 'manual' }" @click="skillTab = 'manual'">手动安装</button>
-              </div>
-
-              <div v-show="skillTab === 'market'">
-                <div class="agg-search">
-                  <input
-                    ref="marketInput"
-                    v-model="skillSearchQ"
-                    placeholder="关键词，如：react、设计、API…"
-                    @keydown.enter="searchSkills"
-                  />
-                  <button type="button" class="btn btn-primary" :disabled="skillSearching" @click="searchSkills">
+                <div class="section-label">方式</div>
+                <div class="mode-list">
+                  <button type="button" class="mode" :class="{ on: skillTab === 'market' }" @click="setSkillTab('market')">
                     <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
-                    搜索
+                    市场搜索
+                  </button>
+                  <button type="button" class="mode" :class="{ on: skillTab === 'local' }" @click="setSkillTab('local')">
+                    <svg viewBox="0 0 24 24"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
+                    本地预置
+                  </button>
+                  <button type="button" class="mode" :class="{ on: skillTab === 'manual' }" @click="setSkillTab('manual')">
+                    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                    手动安装
                   </button>
                 </div>
-
-                <div class="src-filters" role="group" aria-label="数据源过滤">
+              </div>
+              <div v-show="skillTab === 'market'">
+                <div class="section-label">数据源</div>
+                <div class="src-list" role="group" aria-label="数据源过滤">
                   <button
                     v-for="src in SKILL_SOURCE_ORDER"
                     :key="src"
                     type="button"
-                    class="src-chip"
+                    class="nav-src"
                     :class="{ on: isSourceOn(src) }"
                     :data-src="src"
                     :aria-pressed="isSourceOn(src)"
-                    :title="src === 'github' ? '配置 GITHUB_TOKEN 可启用 filename:SKILL.md code search' : undefined"
+                    :title="src === 'github' || src === 'anthropics' ? '配置 GITHUB_TOKEN 后可用（Anthropic 官方库 / GitHub 代码搜索）' : undefined"
                     @click="toggleSkillSource(src)"
                   >
-                    <span class="check" aria-hidden="true">
+                    <span class="box" aria-hidden="true">
                       <svg v-if="isSourceOn(src)" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>
                     </span>
                     {{ SKILL_SOURCE_LABELS[src] }}
                   </button>
                 </div>
+              </div>
+            </aside>
 
-                <div v-if="skillSearched && sourceMetaItems.length" class="src-meta">
-                  <span
-                    v-for="m in sourceMetaItems"
-                    :key="m.id"
-                    class="src-meta-item"
-                    :class="{ err: !!m.error }"
-                    :title="m.error || undefined"
-                  >
-                    {{ m.label }} · <span class="n">{{ m.error ? '失败' : m.count }}</span>
-                  </span>
-                </div>
-
-                <div class="agg-status">
-                  <template v-if="skillSearching"><span>正在并行查询各源…</span></template>
-                  <template v-else-if="skillSearched">
-                    <span>共 <strong>{{ skillSearchResults.length }}</strong> 条（已跨源去重）</span>
-                    <span>标签标明来源</span>
-                  </template>
-                  <template v-else>
-                    <span>并行检索已选市场；GitHub / SkillsMP 可配可选 Key</span>
-                  </template>
-                </div>
-
-                <div v-if="skillSearching" class="m-loading">
-                  <div class="spinner" aria-hidden="true" />
-                  聚合搜索中…
-                </div>
-                <div v-else-if="!skillSearched" class="m-hint">
-                  输入关键词，从多个 Skills 市场一次搜齐。<br />每条结果带<strong>来源标签</strong>。
-                  <div class="suggest-row">
-                    <button v-for="s in SUGGESTS" :key="s" type="button" class="suggest" @click="suggestSearch(s)">{{ s }}</button>
-                  </div>
-                </div>
-                <div v-else-if="!skillSearchResults.length" class="m-empty">无结果。换个关键词，或调整上方数据源。</div>
-                <div v-else class="m-list">
-                  <article
-                    v-for="s in skillSearchResults"
-                    :key="(s.source || '') + ':' + (s.name || '') + ':' + (s.install_command || '')"
-                    class="m-card"
-                    :class="'src-' + sourceTagClass(s.source)"
-                  >
-                    <div class="m-card-top">
-                      <h4 :title="s.name">{{ s.name }}</h4>
-                      <div class="m-tags">
-                        <span
-                          class="src-tag"
-                          :class="sourceTagClass(s.source)"
-                          :title="'来源：' + sourceLabel(s)"
-                        >
-                          <span class="dot" aria-hidden="true" />
-                          {{ sourceLabel(s) }}
-                        </span>
-                      </div>
-                    </div>
-                    <div class="meta" :title="[s.author, s.install_count != null ? '安装量/星标 ' + s.install_count : ''].filter(Boolean).join(' · ')">
-                      {{ [s.author ? '作者 ' + s.author : '', s.install_count != null ? '热度 ' + s.install_count : ''].filter(Boolean).join(' · ') || '—' }}
-                    </div>
-                    <p>{{ s.description || '暂无描述' }}</p>
-                    <div v-if="s.install_command" class="cmd-line" :title="s.install_command">{{ s.install_command }}</div>
-                    <div class="btn-cluster">
-                      <button type="button" class="btn btn-soft btn-sm" @click="installFromSearch(s)">
-                        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-                        安装
-                      </button>
-                    </div>
-                  </article>
+            <section class="studio-catalog">
+              <div class="cat-h">
+                <div>
+                  <h3 id="skill-drawer-title">添加技能</h3>
+                  <p class="sub">{{ drawerSub }}</p>
                 </div>
               </div>
 
-              <div v-show="skillTab === 'local'">
-                <div class="agg-search">
+              <template v-if="skillTab === 'market'">
+                <div class="cat-search">
+                  <input
+                    ref="marketInput"
+                    v-model="skillSearchQ"
+                    placeholder="关键词，如：react、设计、API…"
+                    @keydown.enter="runSkillSearch"
+                  />
+                  <button type="button" class="btn btn-primary" :disabled="skillSearching" @click="runSkillSearch">
+                    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
+                    搜索
+                  </button>
+                </div>
+                <div class="meta-bar">
+                  <template v-if="skillSearching"><span>正在并行查询各源…</span></template>
+                  <template v-else-if="skillSearched">
+                    <span>
+                      共 <strong>{{ displayedSkillCount }}</strong>
+                      <template v-if="filterActive && displayedSkillCount !== skillSearchResults.length">
+                        / {{ skillSearchResults.length }}
+                      </template>
+                      条 · 已跨源去重
+                    </span>
+                    <button
+                      type="button"
+                      class="adv-toggle"
+                      :class="{ on: filterPanelOpen || filterActive }"
+                      @click="filterPanelOpen = !filterPanelOpen"
+                    >
+                      高级筛选
+                      <svg viewBox="0 0 24 24" :class="{ open: filterPanelOpen }"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                  </template>
+                  <template v-else>
+                    <span>并行检索已选市场；搜完后可用高级筛选与排序</span>
+                  </template>
+                </div>
+                <div v-if="skillSearched && !skillSearching && filterPanelOpen" class="adv-panel">
+                  <div class="adv-row">
+                    <span class="adv-label">来源</span>
+                    <div class="adv-chips" role="group" aria-label="多选来源">
+                      <button
+                        type="button"
+                        class="adv-chip"
+                        :class="{ on: filterSources.length === 0 }"
+                        @click="filterSources = []"
+                      >全部</button>
+                      <button
+                        v-for="m in sourceMetaItems"
+                        :key="m.id"
+                        type="button"
+                        class="adv-chip"
+                        :class="{ on: isFilterSourceOn(m.id) }"
+                        :data-src="m.id"
+                        @click="toggleFilterSource(m.id)"
+                      >{{ m.label }} · {{ m.count }}</button>
+                    </div>
+                  </div>
+                  <div class="adv-row">
+                    <span class="adv-label">关键词</span>
+                    <input
+                      v-model="filterQuery"
+                      class="adv-input"
+                      placeholder="在结果中筛选名称 / 作者 / 描述…"
+                    />
+                  </div>
+                  <div class="adv-row">
+                    <span class="adv-label">排序</span>
+                    <div class="adv-sort" role="group" aria-label="排序方式">
+                      <button
+                        type="button"
+                        class="adv-chip"
+                        :class="{ on: sortBy === 'name' }"
+                        @click="setSortBy('name')"
+                      >
+                        字母
+                        <span v-if="sortBy === 'name'" class="dir">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+                      </button>
+                      <button
+                        type="button"
+                        class="adv-chip"
+                        :class="{ on: sortBy === 'heat' }"
+                        @click="setSortBy('heat')"
+                      >
+                        热度
+                        <span v-if="sortBy === 'heat'" class="dir">{{ sortDir === 'asc' ? '↑' : '↓' }}</span>
+                      </button>
+                      <button
+                        type="button"
+                        class="adv-chip"
+                        :class="{ on: sortDir === 'asc' }"
+                        @click="setSortDir('asc')"
+                      >升序</button>
+                      <button
+                        type="button"
+                        class="adv-chip"
+                        :class="{ on: sortDir === 'desc' }"
+                        @click="setSortDir('desc')"
+                      >降序</button>
+                    </div>
+                  </div>
+                  <div class="adv-actions">
+                    <button type="button" class="btn btn-soft" @click="resetAdvancedFilter">重置</button>
+                  </div>
+                </div>
+                <div v-if="skillSearched && sourceMetaItems.length && !filterPanelOpen" class="src-meta-bar">
+                  <span
+                    v-for="m in sourceMetaItems"
+                    :key="m.id"
+                    class="src-meta-tag"
+                  >{{ m.label }} · {{ m.count }}</span>
+                </div>
+                <div class="results">
+                  <div v-if="skillSearching" class="m-loading">
+                    <div class="spinner" aria-hidden="true" />
+                    聚合搜索中…
+                  </div>
+                  <div v-else-if="!skillSearched" class="m-hint">
+                    输入关键词，从多个 Skills 市场一次搜齐。<br />选中结果后在右侧预览并安装。
+                    <div class="suggest-row">
+                      <button v-for="s in SUGGESTS" :key="s" type="button" class="suggest" @click="suggestSearch(s)">{{ s }}</button>
+                    </div>
+                  </div>
+                  <div v-else-if="!skillSearchResults.length" class="m-empty">无结果。换个关键词，或调整左侧数据源。</div>
+                  <div v-else-if="!displayedSkillResults.length" class="m-empty">
+                    当前筛选无结果。
+                    <button type="button" class="suggest" style="margin-top:10px" @click="resetAdvancedFilter">重置筛选</button>
+                  </div>
+                  <template v-else>
+                    <article
+                      v-for="s in displayedSkillResults"
+                      :key="skillItemKey(s)"
+                      class="m-card"
+                      :class="['from-' + sourceTagClass(s.source), { sel: isPreviewSelected(s) }]"
+                      tabindex="0"
+                      @click="selectSkillItem(s)"
+                      @keydown.enter.prevent="selectSkillItem(s)"
+                    >
+                      <div class="m-card-top">
+                        <h4 :title="s.name">{{ s.name }}</h4>
+                        <div class="m-tags">
+                          <span
+                            class="src-tag"
+                            :class="sourceTagClass(s.source)"
+                            :title="'来源：' + sourceLabel(s)"
+                          >
+                            <span class="dot" aria-hidden="true" />
+                            {{ sourceLabel(s) }}
+                          </span>
+                        </div>
+                      </div>
+                      <div class="meta" :title="[s.author, s.install_count != null ? '安装量/星标 ' + s.install_count : ''].filter(Boolean).join(' · ')">
+                        {{ [s.author ? '作者 ' + s.author : '', s.install_count != null ? '热度 ' + s.install_count : ''].filter(Boolean).join(' · ') || '—' }}
+                      </div>
+                      <p>{{ s.description || '暂无描述' }}</p>
+                      <div v-if="s.install_command" class="cmd-line" :title="s.install_command">{{ s.install_command }}</div>
+                    </article>
+                  </template>
+                </div>
+              </template>
+
+              <template v-else-if="skillTab === 'local'">
+                <div class="cat-search">
                   <input
                     ref="localFilterInput"
                     v-model="localFilterQ"
                     placeholder="筛选本地预置…"
                   />
                 </div>
-                <div class="agg-status">
+                <div class="meta-bar">
                   <span>共 <strong>{{ filteredLocalSkills.length }}</strong> / {{ localSkills.length }} 个预置</span>
                 </div>
-                <div v-if="!filteredLocalSkills.length" class="m-empty">
-                  {{ localSkills.length ? '无匹配预置技能' : '暂无本地预置技能' }}
-                </div>
-                <div v-else class="m-list">
-                  <article
-                    v-for="s in filteredLocalSkills"
-                    :key="s.skill_name"
-                    class="m-card src-local"
-                  >
-                    <div class="m-card-top">
-                      <h4 :title="s.skill_name">{{ s.skill_name }}</h4>
-                      <div class="m-tags">
-                        <span v-if="s.category" class="src-tag local">
-                          <span class="dot" aria-hidden="true" />
-                          {{ s.category }}
-                        </span>
-                        <span class="host-tag">本地</span>
+                <div class="results">
+                  <div v-if="!filteredLocalSkills.length" class="m-empty">
+                    {{ localSkills.length ? '无匹配预置技能' : '暂无本地预置技能' }}
+                  </div>
+                  <template v-else>
+                    <article
+                      v-for="s in filteredLocalSkills"
+                      :key="s.skill_name"
+                      class="m-card from-local"
+                      :class="{ sel: isPreviewSelected(s) }"
+                      tabindex="0"
+                      @click="selectSkillItem(s)"
+                      @keydown.enter.prevent="selectSkillItem(s)"
+                    >
+                      <div class="m-card-top">
+                        <h4 :title="s.skill_name">{{ s.skill_name }}</h4>
+                        <div class="m-tags">
+                          <span v-if="s.category" class="src-tag local">
+                            <span class="dot" aria-hidden="true" />
+                            {{ s.category }}
+                          </span>
+                          <span class="host-tag">本地</span>
+                        </div>
                       </div>
-                    </div>
-                    <p>{{ s.description || '暂无描述' }}</p>
-                    <div class="btn-cluster">
-                      <button type="button" class="btn btn-secondary btn-sm" @click="viewSkillMd(s.skill_name)">
-                        <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
-                        查看
-                      </button>
+                      <p>{{ s.description || '暂无描述' }}</p>
+                    </article>
+                  </template>
+                </div>
+              </template>
+
+              <template v-else>
+                <div class="results form-pad">
+                  <div class="field full">
+                    <label>安装源 *</label>
+                    <div class="cat-search" style="margin:0">
+                      <input
+                        ref="manualInput"
+                        v-model="manualSkillInput"
+                        placeholder="owner/repo 或 GitHub URL（也可 owner/repo@skill）"
+                        @keydown.enter.prevent="onManualPrimary"
+                      />
                       <button
                         type="button"
-                        class="btn btn-soft btn-sm"
-                        @click="installFromSearch({ source: 'local', name: s.skill_name, description: s.description, install_command: '' })"
+                        class="btn btn-soft"
+                        :disabled="manualPreviewing || !manualSkillInput.trim()"
+                        @click="previewManualSource"
                       >
-                        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-                        安装
+                        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
+                        {{ manualPreviewing ? '解析中…' : '解析技能' }}
                       </button>
                     </div>
-                  </article>
-                </div>
-              </div>
+                  </div>
+                  <p class="keys-hint">
+                    多技能仓库会先列出可选技能，勾选后再安装。已写 <code>@skill</code> 则只安装该技能。
+                  </p>
 
-              <div v-show="skillTab === 'manual'" class="manual-form">
-                <div class="field full">
-                  <label>安装源 *</label>
-                  <div class="agg-search" style="margin-bottom:0">
-                    <input
-                      ref="manualInput"
-                      v-model="manualSkillInput"
-                      placeholder="owner/repo 或 GitHub URL（也可 owner/repo@skill）"
-                      @keydown.enter.prevent="onManualPrimary"
-                    />
+                  <div v-if="manualPreviewing" class="m-loading">
+                    <div class="spinner" aria-hidden="true" />
+                    正在解析仓库中的技能…
+                  </div>
+
+                  <template v-else-if="manualPreview">
+                    <div class="picker-bar">
+                      <div class="picker-meta">
+                        发现 <strong>{{ manualPreview.count }}</strong> 个技能
+                        <span class="muted">· {{ manualPreview.source }}</span>
+                      </div>
+                      <div class="btn-pair" role="group" aria-label="批量选择">
+                        <button type="button" class="btn btn-ghost btn-sm" @click="selectAllManualSkills(true)">全选</button>
+                        <button type="button" class="btn btn-ghost btn-sm" @click="selectAllManualSkills(false)">清空</button>
+                      </div>
+                    </div>
+
+                    <div v-if="!manualPreview.skills.length" class="m-empty">未发现可安装技能</div>
+                    <div v-else class="pick-list" role="group" aria-label="选择要安装的技能">
+                      <label
+                        v-for="s in manualPreview.skills"
+                        :key="s.name"
+                        class="pick-row"
+                        :class="{ on: manualSelected.includes(s.name) }"
+                      >
+                        <input
+                          type="checkbox"
+                          class="pick-check"
+                          :checked="manualSelected.includes(s.name)"
+                          @change="toggleManualSkill(s.name)"
+                        />
+                        <div class="pick-body">
+                          <div class="pick-name">{{ s.name }}</div>
+                          <div v-if="s.description" class="pick-desc">{{ s.description }}</div>
+                        </div>
+                      </label>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </section>
+
+            <aside class="studio-preview">
+              <template v-if="skillTab === 'manual'">
+                <div class="prev-h">
+                  <div class="eyebrow">手动安装</div>
+                  <h4>{{ manualPreview ? `已发现 ${manualPreview.count} 个` : '解析仓库' }}</h4>
+                  <div class="id">{{ manualSkillInput.trim() || '填写 owner/repo 后解析' }}</div>
+                </div>
+                <div class="prev-b">
+                  <p class="desc">勾选中间列表中的技能，再点下方安装。也可在源里写 <code>@skill</code> 只装单个。</p>
+                  <div class="kv" v-if="manualPreview">
+                    <div><label>已选</label><b>{{ manualSelectedCount }} / {{ manualPreview.count }}</b></div>
+                    <div><label>来源</label><b>{{ manualPreview.source }}</b></div>
+                  </div>
+                </div>
+                <div class="prev-f">
+                  <div class="row">
+                    <button type="button" class="btn btn-secondary" @click="closeDrawer">取消</button>
                     <button
+                      v-if="!manualPreview"
                       type="button"
-                      class="btn btn-soft"
+                      class="btn btn-primary"
                       :disabled="manualPreviewing || !manualSkillInput.trim()"
                       @click="previewManualSource"
                     >
                       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
-                      {{ manualPreviewing ? '解析中…' : '解析技能' }}
+                      解析技能
+                    </button>
+                    <button
+                      v-else
+                      type="button"
+                      class="btn btn-primary"
+                      :disabled="!manualCanInstall || manualInstalling"
+                      @click="installSelectedManualSkills"
+                    >
+                      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                      {{ manualInstalling ? '安装中…' : `安装已选 (${manualSelectedCount})` }}
                     </button>
                   </div>
                 </div>
-                <p class="keys-hint">
-                  多技能仓库会先列出可选技能，勾选后再安装。已写 <code>@skill</code> 则只安装该技能。
-                </p>
+              </template>
 
-                <div v-if="manualPreviewing" class="m-loading">
-                  <div class="spinner" aria-hidden="true" />
-                  正在解析仓库中的技能…
+              <template v-else-if="previewItem">
+                <div class="prev-h">
+                  <div class="eyebrow">技能预览</div>
+                  <h4>{{ previewItem.name || previewItem.skill_name }}</h4>
+                  <div class="id">{{ sourceLabel(previewItem) }}</div>
                 </div>
-
-                <template v-else-if="manualPreview">
-                  <div class="picker-bar">
-                    <div class="picker-meta">
-                      发现 <strong>{{ manualPreview.count }}</strong> 个技能
-                      <span class="muted">· {{ manualPreview.source }}</span>
-                    </div>
-                    <div class="btn-pair" role="group" aria-label="批量选择">
-                      <button type="button" class="btn btn-ghost btn-sm" @click="selectAllManualSkills(true)">全选</button>
-                      <button type="button" class="btn btn-ghost btn-sm" @click="selectAllManualSkills(false)">清空</button>
-                    </div>
+                <div class="prev-b">
+                  <p class="desc">{{ previewItem.description || '暂无描述' }}</p>
+                  <div class="kv">
+                    <div v-if="previewItem.author"><label>作者</label><b>{{ previewItem.author }}</b></div>
+                    <div v-if="previewItem.category"><label>分类</label><b>{{ previewItem.category }}</b></div>
+                    <div v-if="previewItem.install_count != null"><label>热度</label><b>{{ previewItem.install_count }}</b></div>
                   </div>
-
-                  <div v-if="!manualPreview.skills.length" class="m-empty">未发现可安装技能</div>
-                  <div v-else class="pick-list" role="group" aria-label="选择要安装的技能">
-                    <label
-                      v-for="s in manualPreview.skills"
-                      :key="s.name"
-                      class="pick-row"
-                      :class="{ on: manualSelected.includes(s.name) }"
-                    >
-                      <input
-                        type="checkbox"
-                        class="pick-check"
-                        :checked="manualSelected.includes(s.name)"
-                        @change="toggleManualSkill(s.name)"
-                      />
-                      <div class="pick-body">
-                        <div class="pick-name">{{ s.name }}</div>
-                        <div v-if="s.description" class="pick-desc">{{ s.description }}</div>
-                      </div>
-                    </label>
+                  <pre v-if="previewItem.install_command" class="code">{{ previewItem.install_command }}</pre>
+                </div>
+                <div class="prev-f">
+                  <div class="row">
+                    <button
+                      v-if="previewItem.skill_name || previewItem.source === 'local'"
+                      type="button"
+                      class="btn btn-secondary"
+                      @click="viewSkillMd(previewItem.skill_name || previewItem.name)"
+                    >查看</button>
+                    <button type="button" class="btn btn-primary" @click="installPreview">
+                      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                      安装
+                    </button>
                   </div>
-                </template>
+                </div>
+              </template>
+
+              <div v-else class="empty-prev">
+                <p>在中间列表选中一条技能<br />即可在此预览并安装</p>
               </div>
-            </div>
-
-            <div class="drawer-f">
-              <template v-if="skillTab === 'market' || skillTab === 'local'">
-                <button type="button" class="btn btn-secondary" @click="closeDrawer">关闭</button>
-              </template>
-              <template v-else>
-                <button type="button" class="btn btn-secondary" @click="closeDrawer">取消</button>
-                <button
-                  v-if="!manualPreview"
-                  type="button"
-                  class="btn btn-primary"
-                  :disabled="manualPreviewing || !manualSkillInput.trim()"
-                  @click="previewManualSource"
-                >
-                  <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
-                  解析技能
-                </button>
-                <button
-                  v-else
-                  type="button"
-                  class="btn btn-primary"
-                  :disabled="!manualCanInstall || manualInstalling"
-                  @click="installSelectedManualSkills"
-                >
-                  <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-                  {{ manualInstalling ? '安装中…' : `安装已选 (${manualSelectedCount})` }}
-                </button>
-              </template>
-            </div>
-          </aside>
+            </aside>
+          </div>
         </div>
       </Transition>
     </Teleport>
@@ -650,108 +951,208 @@ tr:hover .ops { background: #f7f8fa; }
 .keys-bar h2 { margin: 0 0 2px; font-size: 14px; color: #1f2329; }
 .keys-bar p { margin: 0; font-size: 12px; color: #86909c; }
 
-.drawer-root { position: fixed; inset: 0; z-index: 60; }
-.drawer-overlay { position: absolute; inset: 0; background: rgba(31,35,41,.36); }
-.drawer-panel {
-  position: absolute; top: 0; right: 0; width: min(440px, 100%); height: 100%; background: #fff;
-  box-shadow: -8px 0 32px rgba(0,0,0,.12); display: flex; flex-direction: column;
+.drawer-root {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; box-sizing: border-box;
 }
-.drawer-panel.wide { width: min(560px, 100%); }
-.drawer-h {
-  padding: 18px 20px 16px; border-bottom: 1px solid #e5e6eb;
-  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+.drawer-overlay { position: absolute; inset: 0; background: rgba(31,35,41,.4); }
+
+.studio {
+  position: relative; z-index: 1;
+  width: min(980px, 100%); height: min(640px, calc(100vh - 48px));
+  background: #fff; border-radius: 18px;
+  box-shadow: 0 28px 72px rgba(15,20,30,.28);
+  display: flex; align-items: stretch; overflow: hidden;
 }
-.drawer-h h3 { margin: 0 0 4px; font-size: 15px; font-weight: 650; color: #1f2329; }
-.drawer-h .sub { margin: 0; font-size: 12px; color: #86909c; line-height: 1.4; }
-.drawer-b { flex: 1; overflow: auto; padding: 18px 20px; }
-.drawer-f {
-  padding: 14px 20px; border-top: 1px solid #e5e6eb;
-  display: flex; gap: 8px; justify-content: flex-end; background: #f7f8fa;
+.studio-nav {
+  width: 180px; flex: 0 0 180px;
+  background: linear-gradient(180deg, #f7f9fd, #eef3fb);
+  border-right: 1px solid #e5e6eb;
+  padding: 14px 12px; display: flex; flex-direction: column; gap: 14px;
+  overflow: auto; min-height: 0; z-index: 2;
+}
+.nav-brand {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px 4px;
+}
+.nav-brand b {
+  font-size: 12px; font-weight: 700; color: #0e42d2; letter-spacing: .04em; text-transform: uppercase;
+}
+.section-label {
+  font-size: 10px; font-weight: 700; color: #86909c;
+  letter-spacing: .06em; text-transform: uppercase; padding: 0 6px; margin-bottom: 6px;
+}
+.mode-list { display: flex; flex-direction: column; gap: 4px; }
+.mode {
+  height: 34px; border: none; border-radius: 9px; background: transparent;
+  font-size: 12px; font-weight: 600; color: #4e5969;
+  display: flex; align-items: center; gap: 8px; padding: 0 10px; cursor: pointer; text-align: left;
+  transition: background .15s, color .15s;
+}
+.mode svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .7; }
+.mode:hover { background: rgba(22,93,255,.06); color: #0e42d2; }
+.mode.on { background: #fff; color: #0e42d2; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.mode.on svg { opacity: 1; }
+.src-list { display: flex; flex-direction: column; gap: 4px; }
+.nav-src {
+  height: 30px; border-radius: 8px; border: 1px solid transparent; background: transparent;
+  font-size: 11px; font-weight: 600; color: #86909c;
+  display: flex; align-items: center; gap: 8px; padding: 0 8px; cursor: pointer; text-align: left;
+}
+.nav-src .box {
+  width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid #c9cdd4;
+  display: grid; place-items: center; background: #fff; flex-shrink: 0;
+}
+.nav-src .box svg { width: 9px; height: 9px; stroke: #fff; fill: none; stroke-width: 3; }
+.nav-src.on { color: #1f2329; background: rgba(255,255,255,.7); }
+.nav-src.on .box { background: #165dff; border-color: #165dff; }
+.nav-src[data-src="smithery"].on .box { background: #722ed1; border-color: #722ed1; }
+.nav-src[data-src="modelscope"].on .box { background: #00b42a; border-color: #00b42a; }
+.nav-src[data-src="skillsmp"].on .box { background: #0e42d2; border-color: #0e42d2; }
+.nav-src[data-src="clawhub"].on .box { background: #ff7d00; border-color: #ff7d00; }
+.nav-src[data-src="anthropics"].on .box { background: #d97706; border-color: #d97706; }
+.nav-src[data-src="github"].on .box { background: #4e5969; border-color: #4e5969; }
+
+.studio-catalog {
+  flex: 1 1 0%;
+  min-width: 260px; min-height: 0;
+  display: flex; flex-direction: column;
+  background: #fff; overflow: hidden; z-index: 1;
+}
+.cat-h {
+  padding: 14px 16px 10px; border-bottom: 1px solid #e5e6eb;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;
+}
+.cat-h h3 { margin: 0 0 4px; font-size: 15px; font-weight: 700; color: #1f2329; }
+.cat-h .sub { margin: 0; font-size: 12px; color: #86909c; line-height: 1.4; }
+.cat-search { margin: 12px 16px 0; display: flex; gap: 8px; }
+.cat-search input {
+  flex: 1; height: 38px; border: 1.5px solid #c9cdd4; border-radius: 10px;
+  padding: 0 12px; font-size: 13px; background: #fff; min-width: 0;
+}
+.cat-search input:focus {
+  outline: none; border-color: #165dff; box-shadow: 0 0 0 3px rgba(22,93,255,.15);
+}
+.cat-search .btn { height: 38px; border-radius: 10px; padding: 0 14px; flex-shrink: 0; }
+.meta-bar {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 16px; font-size: 11px; color: #86909c;
+}
+.meta-bar strong { color: #1f2329; }
+.adv-toggle {
+  height: 26px; padding: 0 10px; border-radius: 7px; border: 1px solid #e5e6eb; background: #fff;
+  font-size: 11px; font-weight: 600; color: #4e5969; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.adv-toggle svg {
+  width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round; transition: transform .15s;
+}
+.adv-toggle svg.open { transform: rotate(180deg); }
+.adv-toggle:hover, .adv-toggle.on {
+  color: #0e42d2; border-color: #bedaff; background: #eef4ff;
+}
+.adv-panel {
+  margin: 0 16px 8px; padding: 12px; border: 1px solid #e5e6eb; border-radius: 12px;
+  background: #fafbfc; display: grid; gap: 10px;
+}
+.adv-row { display: flex; align-items: flex-start; gap: 10px; }
+.adv-label {
+  flex: 0 0 42px; padding-top: 5px;
+  font-size: 11px; font-weight: 700; color: #86909c;
+}
+.adv-chips, .adv-sort { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; }
+.adv-chip {
+  height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid #e5e6eb; background: #fff;
+  font-size: 11px; font-weight: 600; color: #4e5969; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.adv-chip:hover { border-color: #c9cdd4; color: #1f2329; }
+.adv-chip.on {
+  color: #0e42d2; border-color: #bedaff; background: #eef4ff;
+}
+.adv-chip .dir { font-size: 12px; line-height: 1; }
+.adv-input {
+  flex: 1; height: 32px; border: 1px solid #e5e6eb; border-radius: 8px;
+  padding: 0 10px; font-size: 12px; background: #fff; color: #1f2329;
+}
+.adv-input:focus {
+  outline: none; border-color: #165dff; box-shadow: 0 0 0 3px rgba(22,93,255,.12);
+}
+.adv-actions { display: flex; justify-content: flex-end; }
+.src-meta-bar {
+  display: flex; flex-wrap: wrap; gap: 4px; padding: 0 16px 8px;
+}
+.src-meta-tag {
+  padding: 2px 7px; border-radius: 6px; background: #f7f8fa; border: 1px solid #e5e6eb;
+  font-size: 11px; font-weight: 600; color: #86909c;
 }
 
-.tabs { display: flex; gap: 4px; margin-bottom: 14px; background: #f7f8fa; padding: 3px; border-radius: 10px; }
-.tabs button {
-  flex: 1; height: 32px; border-radius: 8px; font-size: 12px; font-weight: 600;
-  color: #86909c; border: none; background: transparent; cursor: pointer;
+.results {
+  flex: 1 1 0%; min-height: 0; min-width: 0;
+  overflow-x: hidden; overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 20px 20px;
+  display: flex; flex-direction: column; gap: 10px;
+  align-items: stretch;
+  box-sizing: border-box;
 }
-.tabs button.on { background: #fff; color: #0e42d2; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
-
-.agg-search { display: flex; gap: 8px; margin-bottom: 12px; }
-.agg-search input {
-  flex: 1; height: 40px; border: 1px solid #c9cdd4; border-radius: 10px; padding: 0 12px; font-size: 13px;
-}
-.agg-search .btn { height: 40px; padding: 0 14px; border-radius: 10px; }
-
-.src-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.src-chip {
-  height: 30px; padding: 0 12px 0 8px; border-radius: 999px; font-size: 12px; font-weight: 650;
-  border: 1.5px solid #e5e6eb; background: #fff; color: #86909c;
-  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-  transition: background .15s ease, color .15s ease, border-color .15s ease, box-shadow .15s ease;
-}
-.src-chip .check {
-  width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0;
-  display: grid; place-items: center;
-  border: 1.5px solid #c9cdd4; background: #fff;
-}
-.src-chip .check svg {
-  width: 10px; height: 10px; stroke: #fff; fill: none; stroke-width: 3;
-  stroke-linecap: round; stroke-linejoin: round;
-}
-.src-chip:hover:not(.on) { border-color: #c9cdd4; color: #4e5969; background: #f7f8fa; }
-.src-chip.on { color: #fff; box-shadow: 0 1px 2px rgba(31, 35, 41, 0.12); }
-.src-chip.on .check { border-color: rgba(255, 255, 255, 0.35); background: rgba(255, 255, 255, 0.22); }
-.src-chip[data-src="skillssh"].on { background: #165dff; border-color: #165dff; }
-.src-chip[data-src="smithery"].on { background: #722ed1; border-color: #722ed1; }
-.src-chip[data-src="modelscope"].on { background: #00b42a; border-color: #00b42a; }
-.src-chip[data-src="skillsmp"].on { background: #0e42d2; border-color: #0e42d2; }
-.src-chip[data-src="clawhub"].on { background: #ff7d00; border-color: #ff7d00; }
-.src-chip[data-src="anthropics"].on { background: #d97706; border-color: #d97706; }
-.src-chip[data-src="github"].on { background: #4e5969; border-color: #4e5969; }
-.src-chip.on:hover { filter: brightness(1.05); }
-
-.src-meta {
-  display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px;
-  padding: 8px 10px; border-radius: 10px; background: #f7f8fa;
-}
-.src-meta-item {
-  font-size: 11px; color: #4e5969; display: inline-flex; align-items: center; gap: 4px;
-  padding: 2px 8px; border-radius: 6px; background: #fff; border: 1px solid #e5e6eb;
-}
-.src-meta-item.err { color: var(--red); border-color: var(--red-border); background: var(--red-bg); }
-.src-meta-item .n { font-weight: 700; font-variant-numeric: tabular-nums; color: #1f2329; }
-.src-meta-item.err .n { color: var(--red); }
-
-.agg-status {
-  font-size: 12px; color: #86909c; margin-bottom: 10px;
-  display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap;
-}
-.agg-status strong { color: #1f2329; font-weight: 650; }
-
-.m-list { display: grid; gap: 10px; }
+.results.form-pad { padding: 12px 20px 20px; overflow-y: auto; }
 .m-card {
-  border: 1px solid #e5e6eb; border-radius: 12px; padding: 12px 12px 12px 14px;
-  position: relative; overflow: hidden; transition: border-color .15s, box-shadow .15s;
+  border: 1px solid #e5e6eb;
+  border-left: 3px solid #c9cdd4;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #fff;
+  width: 100%; max-width: 100%;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  cursor: pointer;
+  transition: border-color .15s, box-shadow .15s, background .15s;
 }
-.m-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: #c9cdd4; }
-.m-card.src-skillssh::before { background: #165dff; }
-.m-card.src-smithery::before { background: #722ed1; }
-.m-card.src-modelscope::before { background: #00b42a; }
-.m-card.src-skillsmp::before { background: #0e42d2; }
-.m-card.src-clawhub::before { background: #ff7d00; }
-.m-card.src-anthropics::before { background: #d97706; }
-.m-card.src-github::before { background: #4e5969; }
-.m-card.src-local::before { background: #722ed1; }
-.m-card:hover { border-color: #d9e6ff; box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06); }
-.m-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
-.m-card h4 { margin: 0; font-size: 13px; font-weight: 650; line-height: 1.3; min-width: 0; word-break: break-word; color: #1f2329; }
-.m-tags { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; flex-shrink: 0; }
+.m-card.from-skillssh { border-left-color: #165dff; }
+.m-card.from-smithery { border-left-color: #722ed1; }
+.m-card.from-modelscope { border-left-color: #00b42a; }
+.m-card.from-skillsmp { border-left-color: #0e42d2; }
+.m-card.from-clawhub { border-left-color: #ff7d00; }
+.m-card.from-anthropics { border-left-color: #d97706; }
+.m-card.from-github { border-left-color: #4e5969; }
+.m-card.from-local { border-left-color: #722ed1; }
+.m-card:hover {
+  border-top-color: #d9e6ff;
+  border-right-color: #d9e6ff;
+  border-bottom-color: #d9e6ff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06);
+}
+.m-card.sel {
+  border-color: #165dff;
+  background: #eef4ff;
+  outline: 2px solid rgba(22,93,255,.28);
+  outline-offset: 1px;
+}
+.m-card.sel.from-skillssh { border-left-color: #165dff; }
+.m-card.sel.from-smithery { border-left-color: #722ed1; }
+.m-card.sel.from-modelscope { border-left-color: #00b42a; }
+.m-card.sel.from-skillsmp { border-left-color: #0e42d2; }
+.m-card.sel.from-clawhub { border-left-color: #ff7d00; }
+.m-card.sel.from-anthropics { border-left-color: #d97706; }
+.m-card.sel.from-github { border-left-color: #4e5969; }
+.m-card.sel.from-local { border-left-color: #722ed1; }
+.m-card-top {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
+  margin-bottom: 6px; min-width: 0;
+}
+.m-card h4 {
+  margin: 0; font-size: 13px; font-weight: 650; line-height: 1.3;
+  flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; word-break: break-word; color: #1f2329;
+}
+.m-tags { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; flex: 0 1 auto; max-width: 46%; }
 .src-tag {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 999px;
   border: 1px solid transparent; white-space: nowrap;
 }
-.src-tag .dot { width: 5px; height: 5px; border-radius: 50%; }
+.src-tag .dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
 .src-tag.skillssh { background: #eef4ff; color: #0e42d2; border-color: #d9e6ff; }
 .src-tag.skillssh .dot { background: #165dff; }
 .src-tag.smithery { background: #f5e8ff; color: #722ed1; border-color: #e6d0ff; }
@@ -770,21 +1171,66 @@ tr:hover .ops { background: #f7f8fa; }
 .src-tag.local .dot { background: #722ed1; }
 .host-tag {
   font-size: 10px; font-weight: 700; padding: 3px 7px; border-radius: 999px;
-  background: #e8ffea; color: #00b42a; border: 1px solid #b7ebc4;
+  background: #e8ffea; color: #00b42a; border: 1px solid #b7ebc4; white-space: nowrap;
 }
 .m-card .meta {
   font-size: 11px; color: #86909c; margin-bottom: 6px;
   font-family: 'JetBrains Mono', Consolas, monospace;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
 .m-card p {
-  margin: 0 0 10px; font-size: 12px; color: #4e5969; line-height: 1.45;
+  margin: 0; font-size: 12px; color: #4e5969; line-height: 1.45;
   display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .cmd-line {
   font-family: 'JetBrains Mono', Consolas, monospace; font-size: 10px; color: #86909c;
-  margin: -4px 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  margin-top: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
+
+.studio-preview {
+  width: 280px; flex: 0 0 280px;
+  border-left: 1px solid #e5e6eb;
+  background: linear-gradient(180deg, #fafbfd, #f3f6fb);
+  display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; z-index: 2;
+}
+.prev-h { padding: 16px 16px 12px; border-bottom: 1px solid #e5e6eb; }
+.prev-h .eyebrow {
+  font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: #165dff; margin-bottom: 6px;
+}
+.prev-h h4 { margin: 0 0 6px; font-size: 15px; font-weight: 700; line-height: 1.25; word-break: break-word; }
+.prev-h .id { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 11px; color: #86909c; word-break: break-all; }
+.prev-b { flex: 1; overflow: auto; padding: 14px 16px; }
+.desc { font-size: 13px; line-height: 1.55; color: #4e5969; margin: 0 0 14px; }
+.desc code {
+  font-size: 11px; padding: 0 4px; border-radius: 4px; background: #f7f8fa;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+}
+.kv { display: grid; gap: 10px; margin-bottom: 14px; }
+.kv div {
+  background: #fff; border: 1px solid #e5e6eb; border-radius: 10px; padding: 10px 12px;
+}
+.kv label {
+  display: block; font-size: 10px; font-weight: 700; color: #86909c;
+  letter-spacing: .04em; text-transform: uppercase; margin-bottom: 4px;
+}
+.kv b { font-size: 12px; font-weight: 600; color: #1f2329; word-break: break-word; }
+.code {
+  font-family: 'JetBrains Mono', Consolas, monospace; font-size: 11px; line-height: 1.5;
+  background: #1f2329; color: #d7e3ff; border-radius: 10px; padding: 12px; overflow: auto; margin: 0;
+  white-space: pre-wrap; word-break: break-word;
+}
+.prev-f {
+  padding: 12px 16px; border-top: 1px solid #e5e6eb;
+  background: rgba(255,255,255,.7);
+}
+.prev-f .row { display: flex; gap: 8px; }
+.prev-f .btn { flex: 1; }
+.empty-prev {
+  flex: 1; display: grid; place-items: center; text-align: center;
+  padding: 24px; color: #86909c; font-size: 13px; line-height: 1.5;
+}
+
 .m-empty, .m-loading, .m-hint {
   text-align: center; padding: 36px 16px; color: #86909c; font-size: 13px; line-height: 1.5;
 }
@@ -801,15 +1247,10 @@ tr:hover .ops { background: #f7f8fa; }
 }
 .suggest:hover { border-color: #d9e6ff; color: #0e42d2; background: #eef4ff; }
 
-.manual-form { display: grid; grid-template-columns: 1fr; gap: 12px; }
-.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 0; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 .field.full { grid-column: 1 / -1; }
 .field label { font-size: 12px; font-weight: 600; color: #4e5969; }
-.field input {
-  width: 100%; border: 1px solid #c9cdd4; border-radius: 8px; padding: 9px 11px; font-size: 13px;
-  background: #fff; color: #1f2329;
-}
-.keys-hint { margin: 0; font-size: 12px; color: #86909c; line-height: 1.5; }
+.keys-hint { margin: 0 0 12px; font-size: 12px; color: #86909c; line-height: 1.5; }
 .keys-hint code {
   font-size: 11px; padding: 0 4px; border-radius: 4px; background: #f7f8fa;
   font-family: 'JetBrains Mono', Consolas, monospace;
@@ -817,13 +1258,13 @@ tr:hover .ops { background: #f7f8fa; }
 
 .picker-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
-  margin-top: 4px;
+  margin: 4px 0 10px;
 }
 .picker-meta { font-size: 12px; color: #4e5969; }
 .picker-meta strong { color: #1f2329; font-weight: 700; }
 .picker-meta .muted { color: #86909c; margin-left: 4px; word-break: break-all; }
 
-.pick-list { display: grid; gap: 8px; max-height: min(420px, 48vh); overflow: auto; padding-right: 2px; }
+.pick-list { display: grid; gap: 8px; max-height: min(360px, 42vh); overflow: auto; padding-right: 2px; }
 .pick-row {
   display: flex; gap: 10px; align-items: flex-start;
   padding: 10px 12px; border: 1px solid #e5e6eb; border-radius: 10px;
@@ -842,21 +1283,40 @@ tr:hover .ops { background: #f7f8fa; }
   display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 
-.skill-drawer-enter-active, .skill-drawer-leave-active { transition: opacity .2s ease; }
-.skill-drawer-enter-active .drawer-panel, .skill-drawer-leave-active .drawer-panel {
-  transition: transform .22s ease-out;
+.skill-studio-enter-active, .skill-studio-leave-active { transition: opacity .2s ease; }
+.skill-studio-enter-active .studio, .skill-studio-leave-active .studio {
+  transition: transform .22s ease-out, opacity .22s ease-out;
 }
-.skill-drawer-enter-from, .skill-drawer-leave-to { opacity: 0; }
-.skill-drawer-enter-from .drawer-panel, .skill-drawer-leave-to .drawer-panel { transform: translateX(100%); }
+.skill-studio-enter-from, .skill-studio-leave-to { opacity: 0; }
+.skill-studio-enter-from .studio, .skill-studio-leave-to .studio {
+  transform: translateY(8px) scale(.98); opacity: 0;
+}
 
 @media (max-width: 900px) {
   .kpis { grid-template-columns: 1fr 1fr; }
   .cmd { max-width: 160px; }
+  .drawer-root { padding: 12px; align-items: stretch; }
+  .studio {
+    width: 100%; height: min(92vh, 760px);
+    flex-direction: column;
+  }
+  .studio-nav {
+    width: 100%; flex: 0 0 auto;
+    flex-direction: row; flex-wrap: wrap; align-items: flex-start;
+    border-right: none; border-bottom: 1px solid #e5e6eb; gap: 10px;
+    max-height: 160px;
+  }
+  .mode-list, .src-list { flex-direction: row; flex-wrap: wrap; }
+  .studio-catalog { flex: 1 1 0%; min-height: 0; }
+  .studio-preview {
+    width: 100%; flex: 0 0 auto; max-height: 38%;
+    border-left: none; border-top: 1px solid #e5e6eb;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .btn, .switch, .switch::after, .spinner,
-  .skill-drawer-enter-active, .skill-drawer-leave-active,
-  .skill-drawer-enter-active .drawer-panel, .skill-drawer-leave-active .drawer-panel {
+  .skill-studio-enter-active, .skill-studio-leave-active,
+  .skill-studio-enter-active .studio, .skill-studio-leave-active .studio {
     transition: none !important; animation: none !important;
   }
 }

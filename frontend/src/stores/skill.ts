@@ -33,7 +33,7 @@ export const useSkillStore = defineStore('skill', () => {
   const localSkills = ref<any[]>([])
   const skillFilter = reactive({ cat: '', role: '', text: '' })
   const skillTab = ref<'market' | 'local' | 'manual'>('market')
-  const skillMarketSources = ref<SkillSourceId[]>(['skillssh', 'smithery', 'modelscope', 'skillsmp', 'anthropics'])
+  const skillMarketSources = ref<SkillSourceId[]>(['skillssh', 'smithery', 'modelscope', 'skillsmp'])
   const skillSearchQ = ref('')
   const skillSearchResults = ref<any[]>([])
   const skillSearchHint = ref('')

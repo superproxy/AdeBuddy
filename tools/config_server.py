@@ -158,7 +158,8 @@ LLM_TOP_KEYS = ["llm", "embedding", "tts", "asr", "vision", "misc"]
 # 外部市场端点
 MODELSCOPE_SKILLS_API = "https://www.modelscope.cn/openapi/v1/skills"
 MODELSCOPE_MCP_LIST_API = "https://www.modelscope.cn/openapi/v1/mcp/servers"
-MODELSCOPE_MCP_DETAIL_API = "https://www.modelscope.cn/openapi/v1/mcp/servers/{owner}/{name}"
+# 详情需完整 mcp_id（@owner/name）；实际请求由 lib.mcp_market.ModelScopeClient 处理
+MODELSCOPE_MCP_DETAIL_API = "https://www.modelscope.cn/openapi/v1/mcp/servers/{mcp_id}"
 SKILLS_SH_API = "https://skills.sh/api/search"
 
 HTTP_TIMEOUT = 15  # 外部 API 超时秒数
@@ -1101,15 +1102,19 @@ def mcp_detail():
     detail_data: Any = None
     install_info: Any = None
     install_error: Optional[str] = None
+    repo_url = (request.args.get("repo_url") or "").strip()
 
     # 先尽量拉取原始详情（便于「查看配置」）
     try:
         if source == "modelscope":
             from lib.mcp_market import ModelScopeClient
-            o, n = owner, name
-            if (not o or not n) and sid.startswith("@") and "/" in sid:
-                o, n = sid[1:].split("/", 1)
-            detail_data = ModelScopeClient().detail(o, n)
+            # 必须优先用完整 id（如 @modelcontextprotocol/github）；
+            # item.name 常为展示名「GitHub」，不能用来拼详情路径。
+            detail_data = ModelScopeClient().detail(
+                server_id=sid,
+                owner=owner if not sid else "",
+                name=name if not sid else "",
+            )
         elif source == "registry":
             from lib.mcp_market import RegistryClient
             detail_data = RegistryClient().detail(sid or name)
@@ -1117,26 +1122,58 @@ def mcp_detail():
             from lib.mcp_market import SmitheryClient
             detail_data = SmitheryClient().detail(sid or name)
         elif source == "glama":
-            from lib.mcp_market import GlamaClient
-            ns, slug = owner, name
-            if (not ns or not slug) and "/" in (sid or ""):
-                ns, slug = sid.split("/", 1)
-            detail_data = GlamaClient().detail(ns, slug)
+            from lib.mcp_market import GlamaClient, _glama_ns_slug, _glama_repo_fallback
+            ns, slug = _glama_ns_slug(server_id=sid, owner=owner, name=name)
+            try:
+                detail_data = GlamaClient().detail(namespace=ns, slug=slug, server_id=sid)
+            except Exception:
+                # 详情失败不立刻判死：resolve 仍可从 GitHub 仓库自动解析安装 JSON
+                fallback_repo = _glama_repo_fallback(ns, slug, repo_url)
+                detail_data = {
+                    "id": sid or (f"{ns}/{slug}" if ns and slug else ""),
+                    "name": name or slug,
+                    "namespace": ns,
+                    "slug": slug,
+                    "description": "",
+                    "repository": {"url": fallback_repo} if fallback_repo else {},
+                    "url": "",
+                }
         elif source == "pulsemcp":
             from lib.mcp_market import PulseMCPClient
             hits = PulseMCPClient().search(sid or name, limit=5)
             detail_data = (hits[0].get("raw") if hits else None) or {"id": sid or name}
     except Exception as e:
-        return jsonify({"ok": False, "error": f"获取详情失败: {e}"}), 500
+        # 详情失败时仍尝试 resolve_install，并把错误落到 install_error（避免整页硬失败）
+        install_error = f"获取详情失败: {e}"
+        detail_data = None
 
     try:
-        install_info = resolve_mcp_install(source=source, id=sid, owner=owner, name=name)
+        # Glama：把已拉取/降级的 detail 传入，避免再打一次 Glama 详情；仓库解析仍会请求 GitHub
+        install_info = resolve_mcp_install(
+            source=source,
+            id=sid,
+            owner=owner,
+            name=name,
+            detail=detail_data if source == "glama" else None,
+            repo_url=repo_url,
+        )
+        if install_info:
+            install_error = None
     except Exception as e:
-        install_error = str(e)
+        msg = str(e)
+        if not install_error:
+            install_error = msg
+        elif source == "glama":
+            install_error = msg
+        elif not msg.startswith("获取详情"):
+            install_error = f"{install_error}；安装解析: {msg}"
+
+    if detail_data is None and install_info is None:
+        return jsonify({"ok": False, "error": install_error or "获取详情失败"}), 500
 
     return jsonify({
         "ok": True,
-        "data": detail_data,
+        "data": detail_data or (install_info or {}).get("detail"),
         "install": install_info,
         "install_error": install_error,
     })
