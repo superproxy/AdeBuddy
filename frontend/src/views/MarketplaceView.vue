@@ -2,9 +2,12 @@
 import { ref, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMarketplaceStore } from '../stores/marketplace'
+import { useAiGenerateStore } from '../stores/aiGenerate'
 
 const mkt = useMarketplaceStore()
+const ai = useAiGenerateStore()
 const { items, loading, searchQuery, installing } = storeToRefs(mkt)
+const { dialogOpen, prompt, level, generating, output, generatedConfig } = storeToRefs(ai)
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -41,10 +44,16 @@ onMounted(() => { mkt.browse() })
           <span class="w-1 h-4 bg-brand-500 rounded"></span>插件市场
           <span class="text-[10px] text-ink-500 font-normal">{{ items.length }} 个</span>
         </h3>
-        <button @click="mkt.browse()" :disabled="loading"
-               class="text-[11px] text-brand-600 hover:underline disabled:opacity-50">
-          {{ loading ? '加载中…' : '刷新' }}
-        </button>
+        <div class="flex items-center gap-3">
+          <button @click="ai.openDialog()"
+                  class="text-[11px] px-3 py-1 bg-gradient-to-r from-brand-500 to-brand-600 text-white rounded hover:from-brand-600 hover:to-brand-700 shadow-sm">
+            ✨ AI 创建插件
+          </button>
+          <button @click="mkt.browse()" :disabled="loading"
+                 class="text-[11px] text-brand-600 hover:underline disabled:opacity-50">
+            {{ loading ? '加载中…' : '刷新' }}
+          </button>
+        </div>
       </div>
 
       <!-- 搜索框 -->
@@ -128,6 +137,84 @@ onMounted(() => { mkt.browse() })
               class="text-[10px] px-2 py-1 text-red-400 hover:text-red-600 transition ml-auto"
             >移除</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI 创建插件对话框 -->
+    <div v-if="dialogOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="ai.closeDialog()">
+      <div class="bg-white rounded-xl shadow-2xl w-[700px] max-w-[90vw] max-h-[85vh] flex flex-col">
+        <!-- 对话框头部 -->
+        <div class="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+          <h3 class="text-sm font-semibold flex items-center gap-2">✨ AI 创建插件</h3>
+          <button @click="ai.closeDialog()" class="text-ink-400 hover:text-ink-600 text-lg leading-none">&times;</button>
+        </div>
+
+        <!-- 对话框内容 -->
+        <div class="flex-1 overflow-y-auto p-5 space-y-3">
+          <!-- 需求输入 -->
+          <div>
+            <label class="text-[11px] text-ink-500 block mb-1">需求描述</label>
+            <textarea
+              v-model="prompt"
+              :disabled="generating"
+              rows="3"
+              placeholder="例如：一个 Java 后端开发智能体，精通 Spring Boot / MyBatis / MySQL，需要文件系统和搜索能力"
+              class="w-full px-3 py-2 text-xs border border-ink-300 rounded-lg focus:outline-none focus:border-brand-500 disabled:bg-ink-50"
+            ></textarea>
+          </div>
+
+          <!-- 级别选择 -->
+          <div class="flex items-center gap-2">
+            <label class="text-[11px] text-ink-500">工具集级别：</label>
+            <div class="flex gap-1">
+              <button v-for="lv in ['basic', 'standard', 'expert']" :key="lv"
+                @click="level === lv ? level = '' : level = lv"
+                :disabled="generating"
+                :class="['px-2.5 py-1 text-[10px] rounded-md transition border',
+                  level === lv
+                    ? 'bg-brand-500 text-white border-brand-500'
+                    : 'bg-white text-ink-600 border-ink-300 hover:border-brand-400 disabled:opacity-50']">
+                {{ lv === 'basic' ? '基础' : lv === 'standard' ? '进阶' : '专家' }}
+              </button>
+              <span class="text-[10px] text-ink-400 ml-1">（不选则自动判断）</span>
+            </div>
+          </div>
+
+          <!-- 生成按钮 -->
+          <div class="flex items-center gap-2">
+            <button
+              @click="ai.generate()"
+              :disabled="generating || !prompt.trim()"
+              class="px-4 py-1.5 text-xs font-medium text-white rounded-lg bg-gradient-to-r from-brand-500 to-brand-600 hover:from-brand-600 hover:to-brand-700 disabled:opacity-50 shadow-sm"
+            >
+              {{ generating ? '生成中…' : '🚀 开始生成' }}
+            </button>
+            <span v-if="generating" class="text-[10px] text-ink-500">LLM 正在生成 plugin.yaml…</span>
+          </div>
+
+          <!-- 生成输出 -->
+          <div v-if="output" class="space-y-2">
+            <div class="text-[10px] text-ink-500">生成输出：</div>
+            <pre class="bg-gray-900 text-green-400 p-3 rounded-lg text-[11px] max-h-[200px] overflow-y-auto whitespace-pre-wrap font-mono">{{ output }}</pre>
+          </div>
+
+          <!-- 生成的配置预览 -->
+          <div v-if="generatedConfig" class="space-y-2">
+            <div class="text-[10px] text-green-600 font-medium">✓ 生成完成，预览 plugin.yaml：</div>
+            <pre class="bg-ink-50 border border-ink-200 p-3 rounded-lg text-[11px] max-h-[250px] overflow-y-auto whitespace-pre-wrap font-mono">{{ generatedConfig }}</pre>
+          </div>
+        </div>
+
+        <!-- 对话框底部 -->
+        <div v-if="generatedConfig" class="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-100">
+          <button @click="ai.closeDialog()" class="px-3 py-1.5 text-xs text-ink-600 hover:text-ink-800">取消</button>
+          <button
+            @click="ai.save()"
+            class="px-4 py-1.5 text-xs font-medium text-white rounded-lg bg-green-500 hover:bg-green-600 shadow-sm"
+          >
+            💾 保存到插件配置
+          </button>
         </div>
       </div>
     </div>

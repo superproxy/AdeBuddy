@@ -3469,176 +3469,128 @@ def sync_subagent():
 
 
 # ============================================================
-# 自建插件市场
+# 自建插件市场（Blueprint：server/marketplace/）
 # ============================================================
-def _load_marketplace_index() -> list[dict]:
-    """读取市场索引，不存在则返回空列表。"""
-    if not MARKETPLACE_INDEX.exists():
-        return []
+# 将市场逻辑迁移到独立模块 server/marketplace/，通过依赖注入复用 config_server 的辅助函数
+sys.path.insert(0, str(PROJECT_ROOT / "server"))
+from marketplace import create_marketplace_bp
+
+marketplace_bp = create_marketplace_bp(
+    marketplace_dir=MARKETPLACE_DIR,
+    resolve_plugin_path=_resolve_plugin_path,
+    load_env_config_file=load_env_config_file,
+    collect_plugin_skill_dirs=_collect_plugin_skill_dirs,
+    add_plugin_extras_to_zip=_add_plugin_extras_to_zip,
+    import_plugin_zip=_import_plugin_zip,
+    add_dir_to_zip=_add_dir_to_zip,
+)
+app.register_blueprint(marketplace_bp, url_prefix="/api/marketplace")
+
+
+# ============================================================
+# 内嵌终端服务（ttyd）
+# ============================================================
+_ttyd_proc: subprocess.Popen | None = None
+TTYD_PORT = 7681
+
+
+@app.route("/api/terminal/start", methods=["POST"])
+def terminal_start():
+    """启动 ttyd 终端服务，返回访问 URL。"""
+    global _ttyd_proc
+    if _ttyd_proc and _ttyd_proc.poll() is None:
+        # 已在运行
+        return jsonify({"ok": True, "port": TTYD_PORT,
+                        "url": f"http://127.0.0.1:{TTYD_PORT}"})
+    ttyd = shutil.which("ttyd")
+    if not ttyd:
+        hint = "brew install ttyd" if sys.platform == "darwin" else "scoop install ttyd"
+        return jsonify({"ok": False,
+                        "error": f"未安装 ttyd，请执行: {hint}"}), 400
     try:
-        data = json.loads(MARKETPLACE_INDEX.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except Exception:
-        return []
+        _ttyd_proc = subprocess.Popen(
+            [ttyd, "--port", str(TTYD_PORT), "--writable",
+             "--interface", "127.0.0.1", "bash"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        # 等待启动
+        import time
+        for _ in range(10):
+            if _ttyd_proc.poll() is not None:
+                return jsonify({"ok": False, "error": "ttyd 启动后立即退出"}), 500
+            time.sleep(0.2)
+        return jsonify({"ok": True, "port": TTYD_PORT,
+                        "url": f"http://127.0.0.1:{TTYD_PORT}"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
-def _save_marketplace_index(items: list[dict]) -> None:
-    """保存市场索引。"""
-    MARKETPLACE_DIR.mkdir(parents=True, exist_ok=True)
-    MARKETPLACE_INDEX.write_text(
-        json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+@app.route("/api/terminal/stop", methods=["POST"])
+def terminal_stop():
+    """关闭 ttyd 终端服务。"""
+    global _ttyd_proc
+    if _ttyd_proc and _ttyd_proc.poll() is None:
+        _ttyd_proc.terminate()
+        try:
+            _ttyd_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _ttyd_proc.kill()
+    _ttyd_proc = None
+    return jsonify({"ok": True})
 
 
-@app.route("/api/marketplace", methods=["GET"])
-def marketplace_list():
-    """浏览市场。支持 ?q= 搜索（匹配 name/description/tags）。"""
-    q = (request.args.get("q") or "").strip().lower()
-    items = _load_marketplace_index()
-    if q:
-        filtered = []
-        for it in items:
-            haystack = " ".join([
-                it.get("name", ""),
-                it.get("description", ""),
-                it.get("author", ""),
-                " ".join(it.get("tags", [])),
-            ]).lower()
-            if q in haystack:
-                filtered.append(it)
-        items = filtered
-    return jsonify({"ok": True, "data": items, "total": len(items)})
+@app.route("/api/terminal/status", methods=["GET"])
+def terminal_status():
+    """查询 ttyd 运行状态。"""
+    running = _ttyd_proc is not None and _ttyd_proc.poll() is None
+    return jsonify({"ok": True, "running": running,
+                    "port": TTYD_PORT if running else None,
+                    "url": f"http://127.0.0.1:{TTYD_PORT}" if running else None})
 
 
-@app.route("/api/marketplace/publish", methods=["POST"])
-def marketplace_publish():
-    """发布插件到市场。
+# ============================================================
+# AI 插件生成（server/ai_generator/）
+# ============================================================
+@app.route("/api/ai/generate", methods=["GET"])
+def ai_generate():
+    """AI 生成插件配置。SSE 流式输出。
 
-    Body: {file: "xxx.plugin.yaml", tags: ["dev", "backend"]}
-    流程：
-      1. 调用 export_plugin 逻辑生成完整智能体 zip（plugin + skills + llm + rules + commands + subagents + hooks）
-      2. 复制到 config/marketplace/packages/<name>-<version>.zip
-      3. 在 index.json 中添加/更新条目
+    Query: prompt=<用户需求描述>
     """
+    prompt = (request.args.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"ok": False, "error": "缺少 prompt 参数"}), 400
+    model = (request.args.get("model") or "").strip()
+    level = (request.args.get("level") or "").strip()
+
+    def generate():
+        from ai_generator.generator import generate_plugin
+        for chunk in generate_plugin(prompt, PROJECT_ROOT, preferred_model=model, level=level):
+            # SSE data: 行不能含换行符，多行内容需逐行发送
+            for line in chunk.split("\n"):
+                yield f"data: {line}\n\n"
+
+    return Response(stream_with_context(generate()),
+                    mimetype="text/event-stream")
+
+
+@app.route("/api/ai/save", methods=["POST"])
+def ai_save():
+    """保存 AI 生成的插件配置。Body: {content: <yaml字符串>}"""
     body = request.get_json(force=True)
-    fname = (body.get("file") or "").strip()
-    tags = body.get("tags") or []
-    if not fname:
-        return jsonify({"ok": False, "error": "缺少 file 参数"}), 400
-    path = _resolve_plugin_path(fname)
-    if path is None:
-        return jsonify({"ok": False, "error": "插件文件不存在"}), 404
-
+    content = (body.get("content") or "").strip()
+    if not content:
+        return jsonify({"ok": False, "error": "缺少 content"}), 400
     try:
-        cfg = load_env_config_file(path)
-        plugin_name = cfg.get("name", path.stem)
-        version = cfg.get("version", "1.0.0").strip() or "1.0.0"
-        description = cfg.get("description", "").strip()
-        author = cfg.get("author", "AdeBuddy").strip() or "AdeBuddy"
-        skill_dirs = _collect_plugin_skill_dirs(cfg)
-
-        # 生成完整智能体 zip
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.write(path, arcname=fname)
-            for skill_name, skill_dir in skill_dirs:
-                _add_dir_to_zip(zf, skill_dir, arc_prefix=f"skills/{skill_name}")
-            _add_plugin_extras_to_zip(zf, cfg)
-        buf.seek(0)
-
-        # 保存到 marketplace/packages/
-        safe_name = "".join(c for c in plugin_name if c.isalnum() or c in ("-", "_"))
-        pkg_name = f"{safe_name or 'plugin'}-{version}.zip"
-        MARKETPLACE_PACKAGES_DIR.mkdir(parents=True, exist_ok=True)
-        pkg_path = MARKETPLACE_PACKAGES_DIR / pkg_name
-        pkg_path.write_bytes(buf.getvalue())
-        pkg_size = pkg_path.stat().st_size
-
-        # 更新索引
-        items = _load_marketplace_index()
-        item_id = f"{plugin_name}-{version}"
-        # 移除同 id 旧条目（重新发布）
-        items = [it for it in items if it.get("id") != item_id]
-        entry = {
-            "id": item_id,
-            "name": plugin_name,
-            "version": version,
-            "description": description,
-            "author": author,
-            "file": f"packages/{pkg_name}",
-            "size": pkg_size,
-            "published_at": _now_iso(),
-            "tags": tags if isinstance(tags, list) else [],
-            "downloads": 0,
-        }
-        items.append(entry)
-        _save_marketplace_index(items)
-
-        return jsonify({"ok": True, "data": entry})
+        data = yaml.safe_load(content)
+        if not isinstance(data, dict) or not data.get("name"):
+            return jsonify({"ok": False, "error": "无效的 plugin.yaml（缺少 name）"}), 400
+        safe_name = "".join(c for c in data["name"] if c.isalnum() or c in ("-", "_"))
+        out_path = CONFIG_PLUGINS_DIR / f"{safe_name}.plugin.yaml"
+        CONFIG_PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(content, encoding="utf-8")
+        return jsonify({"ok": True, "path": str(out_path.relative_to(PROJECT_ROOT)),
+                        "name": data["name"]})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
-
-@app.route("/api/marketplace/download", methods=["GET"])
-def marketplace_download():
-    """下载市场中的插件 zip。Query: id=xxx"""
-    item_id = (request.args.get("id") or "").strip()
-    if not item_id:
-        return jsonify({"ok": False, "error": "缺少 id 参数"}), 400
-    items = _load_marketplace_index()
-    entry = next((it for it in items if it.get("id") == item_id), None)
-    if not entry:
-        return jsonify({"ok": False, "error": "插件不存在"}), 404
-    pkg_path = MARKETPLACE_DIR / entry["file"]
-    if not pkg_path.exists():
-        return jsonify({"ok": False, "error": "包文件丢失"}), 404
-    # 增加下载计数
-    entry["downloads"] = entry.get("downloads", 0) + 1
-    _save_marketplace_index(items)
-    buf = io.BytesIO(pkg_path.read_bytes())
-    buf.seek(0)
-    return send_file(buf, as_attachment=True, download_name=Path(entry["file"]).name,
-                     mimetype="application/zip")
-
-
-@app.route("/api/marketplace/install", methods=["GET"])
-def marketplace_install():
-    """从市场安装插件。Query: id=xxx
-
-    读取 packages/ 下的 zip，调用 _import_plugin_zip 解压到对应目录。
-    """
-    item_id = (request.args.get("id") or "").strip()
-    if not item_id:
-        return jsonify({"ok": False, "error": "缺少 id 参数"}), 400
-    items = _load_marketplace_index()
-    entry = next((it for it in items if it.get("id") == item_id), None)
-    if not entry:
-        return jsonify({"ok": False, "error": "插件不存在"}), 404
-    pkg_path = MARKETPLACE_DIR / entry["file"]
-    if not pkg_path.exists():
-        return jsonify({"ok": False, "error": "包文件丢失"}), 404
-    try:
-        buf = io.BytesIO(pkg_path.read_bytes())
-        return _import_plugin_zip(buf, overwrite=True)
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-
-@app.route("/api/marketplace/remove", methods=["DELETE"])
-def marketplace_remove():
-    """从市场移除插件。Query: id=xxx"""
-    item_id = (request.args.get("id") or "").strip()
-    if not item_id:
-        return jsonify({"ok": False, "error": "缺少 id 参数"}), 400
-    items = _load_marketplace_index()
-    entry = next((it for it in items if it.get("id") == item_id), None)
-    if not entry:
-        return jsonify({"ok": False, "error": "插件不存在"}), 404
-    # 删除包文件
-    pkg_path = MARKETPLACE_DIR / entry["file"]
-    if pkg_path.exists():
-        pkg_path.unlink()
-    # 从索引移除
-    items = [it for it in items if it.get("id") != item_id]
-    _save_marketplace_index(items)
-    return jsonify({"ok": True, "id": item_id})

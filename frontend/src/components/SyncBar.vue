@@ -45,7 +45,7 @@ const SCOPE_META: Record<string, { key: string; label: string; kind: ScopeKind }
 }
 
 const currentScope = computed(() => SCOPE_META[props.tab] ?? null)
-const visible = computed(() => props.tab !== 'plugin-build' && props.tab !== 'ide' && props.tab !== 'marketplace')
+const visible = computed(() => props.tab !== 'plugin-build' && props.tab !== 'ide' && props.tab !== 'marketplace' && props.tab !== 'terminal')
 
 /** 「全部」= AIDE 管理页已检测到的已安装 IDE/CLI */
 const installedKeySet = computed(() => new Set(installedIdes.value.map((i) => i.key)))

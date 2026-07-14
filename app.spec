@@ -59,6 +59,7 @@ datas = []
 datas += collect_dir('scripts', 'scripts')
 datas += collect_dir('tools', 'tools')
 datas += collect_dir('template', 'template')
+datas += collect_dir('server', 'server')
 
 # 单文件资源
 for f in ('AGENTS.md', 'README.md', 'install.sh', 'install.cmd',
@@ -76,11 +77,15 @@ hiddenimports = [
     'lib.ide.workbuddy', 'lib.ide.qoder', 'lib.ide.openclaw',
     'lib.ide.hermes',
     'lib.ide.idea', 'lib.ide.agents',
+    # AI 生成服务
+    'openai',
+    'marketplace', 'marketplace.routes', 'marketplace.storage',
+    'ai_generator', 'ai_generator.generator',
 ]
 
 a = Analysis(
     ['app.py'],
-    pathex=['scripts', 'tools'],
+    pathex=['scripts', 'tools', 'server'],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
