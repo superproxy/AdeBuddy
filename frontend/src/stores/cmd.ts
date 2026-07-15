@@ -22,7 +22,7 @@ export const useCmdStore = defineStore('cmd', () => {
     if (!silent) r.ok ? ui.toast('cmd.yaml 已保存') : ui.toast('保存失败: ' + r.error, 'err')
     return r.ok
   }
-  function addCmd() { cmdData.commands.push({ name: '', description: '', prompt: '' }) }
+  function addCmd() { cmdData.commands.unshift({ name: '', description: '', prompt: '' }) }
   function deleteCmd(idx: number) { cmdData.commands.splice(idx, 1) }
   function exportCmd() { window.location.href = '/api/cmd/export' }
   async function importCmd(content: string) {
