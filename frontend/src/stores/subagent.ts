@@ -24,8 +24,22 @@ export const useSubagentStore = defineStore('subagent', () => {
     if (!silent) r.ok ? ui.toast('subagent.yaml 已保存') : ui.toast('保存失败: ' + r.error, 'err')
     return r.ok
   }
-  function addSubagent() { subagentData.subagents.push({ name: '', role: '', desc: '', category: '', prompt: '' }) }
+  function addSubagent(partial?: Partial<SubagentItem>) {
+    subagentData.subagents.push({
+      name: '',
+      role: '',
+      desc: '',
+      category: '开发',
+      prompt: '',
+      ...partial,
+    })
+    return subagentData.subagents.length - 1
+  }
   function deleteSubagent(idx: number) { subagentData.subagents.splice(idx, 1) }
+  function updateSubagent(idx: number, item: SubagentItem) {
+    if (idx < 0 || idx >= subagentData.subagents.length) return
+    subagentData.subagents[idx] = { ...item }
+  }
   function exportSubagent() { window.location.href = '/api/subagent/export' }
   async function importSubagent(content: string) {
     const r = await api<{ ok: boolean; error?: string }>('/api/subagent/import', { method: 'POST', body: JSON.stringify({ content }) })
@@ -39,5 +53,15 @@ export const useSubagentStore = defineStore('subagent', () => {
     else ui.toast("同步失败: " + r.error, "err")
   }
 
-  return { subagentData, loadSubagent, saveSubagent, addSubagent, deleteSubagent, exportSubagent, importSubagent, syncToOpencode }
+  return {
+    subagentData,
+    loadSubagent,
+    saveSubagent,
+    addSubagent,
+    deleteSubagent,
+    updateSubagent,
+    exportSubagent,
+    importSubagent,
+    syncToOpencode,
+  }
 })
