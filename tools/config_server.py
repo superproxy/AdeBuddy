@@ -3313,9 +3313,6 @@ def import_subagent():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-if __name__ == "__main__":
-    main()
-
 # ============================================================
 # cmd/subagent 同步到 OpenCode
 # ============================================================
@@ -3688,4 +3685,8 @@ def ai_session_clear(session_id: str):
     if clear_session(session_id):
         return jsonify({"ok": True})
     return jsonify({"ok": False, "error": "会话不存在"}), 404
+
+
+if __name__ == "__main__":
+    main()
 
