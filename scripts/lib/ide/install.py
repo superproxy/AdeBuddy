@@ -596,17 +596,12 @@ def get_install_info(ide_key: str) -> dict:
     app_install = dict(meta.get("app_install", {}))
     homepage = meta.get("homepage", "")
 
-    # 非 macOS 平台：cask 降级为 manual + homepage
+    # 非 macOS 平台：cask/brew/app_cli 降级为 manual + homepage，保留 uninstall_cmd
     if sys.platform != "darwin":
-        if cli_install.get("method") == "cask":
-            cli_install = {"method": "manual", "url": homepage}
-        if cli_install.get("method") == "brew":
-            cli_install = {"method": "manual", "url": homepage}
-        if cli_install.get("method") == "app_cli":
-            # app_cli 依赖 macOS .app 内 CLI，非 macOS 降级为 manual
-            cli_install = {"method": "manual", "url": homepage}
+        if cli_install.get("method") in ("cask", "brew", "app_cli"):
+            cli_install = {**cli_install, "method": "manual", "url": homepage}
         if app_install.get("method") == "cask":
-            app_install = {"method": "manual", "url": homepage}
+            app_install = {**app_install, "method": "manual", "url": homepage}
 
     # 非 Windows 平台：powershell_script 降级为 manual（PowerShell 脚本仅 Windows 适用）
     if sys.platform != "win32" and cli_install.get("method") == "powershell_script":
