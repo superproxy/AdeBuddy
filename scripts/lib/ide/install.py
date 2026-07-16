@@ -44,7 +44,15 @@ IDE_INSTALL_META = {
         "homepage": "https://claude.ai/download",
     },
     "Codex": {
-        "cli_install": {"method": "npm", "package": "@openai/codex", "uninstall_cmd": "npm uninstall -g @openai/codex 2>/dev/null; rm -f $(which codex) 2>/dev/null; rm -rf /opt/homebrew/lib/node_modules/@openai/codex ~/.nvm/versions/node/*/lib/node_modules/@openai/codex"},
+        "cli_install": {
+            "method": "npm",
+            "package": "@openai/codex",
+            "uninstall_cmd": "npm uninstall -g @openai/codex 2>/dev/null; rm -f $(which codex) 2>/dev/null; rm -rf /opt/homebrew/lib/node_modules/@openai/codex ~/.nvm/versions/node/*/lib/node_modules/@openai/codex",
+            # Windows：npm 全局 shim 在 %APPDATA%\npm\（codex / codex.cmd / codex.ps1），
+            # node_modules 在 %APPDATA%\npm\node_modules\@openai\codex；多 node 环境（nvm-windows）
+            # 下 npm uninstall -g 只删当前前缀，需 fallback 删默认 npm 目录 + 配置目录
+            "uninstall_cmd_win": "rmdir /s /q \"%APPDATA%\\npm\\node_modules\\@openai\\codex\" 2>nul & del /q \"%APPDATA%\\npm\\codex\" \"%APPDATA%\\npm\\codex.cmd\" \"%APPDATA%\\npm\\codex.ps1\" 2>nul & rmdir /s /q \"%USERPROFILE%\\.codex\" 2>nul & exit /b 0",
+        },
         "app_install": {
             "method": "system_uninstall",
             "url": "https://openai.com/codex/download",
@@ -482,25 +490,35 @@ def _do_windows_system_uninstall(ide_key: str, mode: str) -> dict | None:
     }
 
 
-def _do_system_uninstall(ide_key: str, mode: str, install_meta: dict, meta: dict) -> dict:
+def _do_system_uninstall(ide_key: str, mode: str, install_meta: dict, meta: dict, force: bool = False) -> dict:
     """系统级卸载（跨平台）。
 
-    - Windows：优先注册表 UninstallString（产品自带卸载程序），回退 uninstall_cmd
+    - Windows：优先注册表 UninstallString（产品自带卸载程序），失败回退 uninstall_cmd 强删
     - macOS：删 .app 目录 + uninstall_cmd
     - Linux：回退 uninstall_cmd
+    - force=True：跳过系统卸载程序，直接 uninstall_cmd 强删（GUI 卸载器卡死/超时/需交互时用）
     """
-    # Windows：优先系统卸载程序
-    if sys.platform == "win32":
+    # Windows：优先系统卸载程序（force 模式跳过，直接走强删）
+    if sys.platform == "win32" and not force:
         sys_result = _do_windows_system_uninstall(ide_key, mode)
-        if sys_result:
+        # 仅当系统卸载程序明确成功才返回；失败（GUI 卡死/超时/非零退出）则 fallback 强删
+        if sys_result and sys_result.get("ok"):
             return sys_result
-    # 回退：配置的 uninstall_cmd
+    # 回退/强制：配置的 uninstall_cmd（rmdir 强删目录）
     uninstall_cmd = _get_uninstall_cmd(install_meta)
     if uninstall_cmd:
         r = _run_uninstall_cmd(uninstall_cmd)
+        ok = r["ok"]
+        # exit=0 不代表目录真删掉（Windows `exit /b 0` / macOS `; true` 都会强制返回 0），
+        # 需跨平台校验安装目录是否还在
+        if ok:
+            ok = not _app_dir_exists(ide_key, meta)
+        msg_prefix = "强制卸载成功" if force else "卸载成功"
+        msg_fail = "强制卸载失败" if force else "卸载失败"
+        message = msg_prefix if ok else f"{msg_fail} (exit={r['returncode']}，目录可能被占用，请关闭进程后重试或手动删除)"
         return {
-            "ok": r["ok"], "ide": ide_key, "mode": mode, "method": "system_uninstall",
-            "message": "卸载成功" if r["ok"] else f"卸载失败 (exit={r['returncode']})",
+            "ok": ok, "ide": ide_key, "mode": mode, "method": "system_uninstall",
+            "message": message,
             "cmd": uninstall_cmd, "stdout": r["stdout"][-2000:], "stderr": r["stderr"][-2000:],
         }
     return {
@@ -511,12 +529,40 @@ def _do_system_uninstall(ide_key: str, mode: str, install_meta: dict, meta: dict
     }
 
 
-def uninstall_ide(ide_key: str, mode: str = "cli") -> dict:
+def _app_dir_exists(ide_key: str, meta: dict) -> bool:
+    """校验 IDE 安装目录是否仍存在（强删后校验用，跨平台）。
+
+    - macOS：检查 macos_apps 路径（.app 是否还在）
+    - Windows：检查 windows_apps 模板的父目录是否还在
+    - Linux：无固定 GUI app 目录概念，返回 False（信任 uninstall_cmd 返回码）
+    """
+    try:
+        from .detect import IDE_DETECT_META, _expand_windows_path
+    except Exception:
+        return False
+    detect_meta = IDE_DETECT_META.get(ide_key, {})
+    if sys.platform == "darwin":
+        for ap in detect_meta.get("macos_apps", []):
+            if Path(ap).exists():
+                return True
+        return False
+    if sys.platform == "win32":
+        for tmpl in detect_meta.get("windows_apps", []):
+            p = _expand_windows_path(tmpl)
+            if p.parent.exists():
+                return True
+    # Linux 等：无 GUI app 目录，不校验
+    return False
+
+
+def uninstall_ide(ide_key: str, mode: str = "cli", force: bool = False) -> dict:
     """卸载 IDE。
 
     Args:
         ide_key: IDE 标识
         mode: "cli" 或 "app"
+        force: 强制卸载——跳过系统卸载程序，直接按 uninstall_cmd 强删目录。
+               用于 GUI 卸载器卡死/超时/需交互弹窗的场景（如 Trae/Cursor app）。
 
     Returns:
         {ok: bool, ide: str, mode: str, method: str, message: str, cmd: str, stdout: str, stderr: str}
@@ -539,8 +585,8 @@ def uninstall_ide(ide_key: str, mode: str = "cli") -> dict:
 
     if method == "system_uninstall":
         # 系统级卸载：Windows 优先调注册表 UninstallString（产品自带卸载程序），
-        # macOS 删 .app，回退到 uninstall_cmd
-        return _do_system_uninstall(ide_key, mode, install_meta, meta)
+        # macOS 删 .app，回退到 uninstall_cmd；force=True 跳过系统卸载程序直接强删
+        return _do_system_uninstall(ide_key, mode, install_meta, meta, force=force)
 
     if method == "manual":
         # manual 但配了 uninstall_cmd：按平台选择卸载命令
@@ -662,10 +708,11 @@ def uninstall_ide(ide_key: str, mode: str = "cli") -> dict:
                     "message": "卸载成功", "cmd": r["cmd"],
                     "stdout": r["stdout"][-2000:], "stderr": r["stderr"][-2000:],
                 }
-        # npm uninstall 失败或二进制仍在，fallback uninstall_cmd
+        # npm uninstall 失败或二进制仍在，fallback uninstall_cmd（按平台选 shell：
+        # Windows 用 cmd /c，macOS/Linux 用 bash -c）
         uninstall_cmd = _get_uninstall_cmd(install_meta)
         if uninstall_cmd:
-            r2 = _run_cmd(["bash", "-c", uninstall_cmd], timeout=120)
+            r2 = _run_uninstall_cmd(uninstall_cmd)
             return {
                 "ok": r2["ok"], "ide": ide_key, "mode": mode, "method": "npm",
                 "message": "卸载成功" if r2["ok"] else f"卸载失败 (exit={r2['returncode']})",

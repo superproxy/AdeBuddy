@@ -64,8 +64,10 @@ IDE_DETECT_META = {
     "Cursor": {
         "label": "Cursor",
         # agent 是 Cursor CLI（TUI 交互式 agent，官方命令，见 cursor.com/cn/docs/cli/overview）
-        # cursor 是 GUI 启动器（cursor.CMD → Cursor.exe，非 TUI）
-        "cli_names": ["agent", "cursor"],
+        # cursor 是 GUI 启动器（cursor.CMD → Cursor.exe），不应作为 CLI 检测依据——
+        # 否则仅装了 Cursor GUI 就会误报 CLI 已安装（exe_path 指向 GUI 的 Cursor.exe）。
+        # GUI 安装由 windows_apps / macos_apps 探测，与 CLI 检测分离。
+        "cli_names": ["agent"],
         "cli_tui_names": ["agent"],
         "macos_apps": [
             "/Applications/Cursor.app",
@@ -95,9 +97,10 @@ IDE_DETECT_META = {
     "TraeCN": {
         "label": "Trae CN",
         # trae-cn 是桌面版 CLI（打开 GUI，非 TUI）
-        # trae-cli/traecli 是 TUI code agent（独立安装于 ~/.local/bin 或 %LOCALAPPDATA%\trae-cli\bin\）
-        "cli_names": ["trae-cn", "trae-cli", "traecli"],
-        "cli_tui_names": ["trae-cli", "traecli"],
+        # traecli/trae-cli 是 TUI code agent（CLI），独立安装于 ~/.local/bin 或 %LOCALAPPDATA%\trae-cli\bin\
+        # 注意：trae-cn 是桌面版启动器（打开 GUI），非 CLI agent，不纳入 cli_names
+        "cli_names": ["traecli", "trae-cli"],
+        "cli_tui_names": ["traecli", "trae-cli"],
         "macos_apps": ["/Applications/Trae CN.app"],
         "windows_apps": [
             "{LOCALAPPDATA}/Programs/Trae CN/Trae CN.exe",
@@ -554,7 +557,9 @@ def _lookup_windows_app_via_system(label: str) -> tuple[str, str]:
     """通过注册表 + 开始菜单快捷方式查找 Windows GUI exe（兜底）。
 
     匹配规则：规范化后的 label 是否被规范化后的 DisplayName / 快捷方式名 包含。
-    避免误匹配：Trae CN 不会匹配到 "TRAE Work CN"（traecn 不是 traeworkcn 的子串）。
+    避免误匹配：
+    - 优先精确匹配（norm_label == norm_name）
+    - 子串匹配时排除其他已知 IDE 的 label（如 "trae" 不应匹配 "traesolocn"）
 
     Returns:
         (exe_path, version) 元组。未找到返回 ("", "")。
@@ -566,13 +571,39 @@ def _lookup_windows_app_via_system(label: str) -> tuple[str, str]:
     if not norm_label:
         return "", ""
 
-    # 1. 注册表：DisplayIcon 通常指向真实 exe（如 "C:\...\Trae CN.exe,0"）
-    #    优先 InstallLocation + 重名 exe，其次 DisplayIcon
-    reg_hits = []
+    # 收集其他 IDE 的规范化 label，子串匹配时排除（避免 Trae 命中 Trae Solo CN）
+    other_norm_labels = set()
+    for k, v in IDE_DETECT_META.items():
+        other_label = v.get("label", "")
+        if other_label and other_label != label:
+            other_norm = _normalize_id(other_label)
+            if other_norm and other_norm != norm_label:
+                other_norm_labels.add(other_norm)
+
+    def _is_exclusive_match(norm_name: str) -> bool:
+        """norm_name 包含 norm_label，但不能完全匹配其他 IDE 的 label（避免子串误匹配）。
+
+        例：norm_label="trae"，norm_name="traesolocn" → 排除（traesolocn 完全匹配 Trae Solo CN）
+            norm_label="traecn"，norm_name="traecn" → 保留（精确匹配）
+        """
+        if norm_label not in norm_name:
+            return False
+        # 若 norm_name 恰好是其他 IDE 的 label 规范化结果，排除
+        for other in other_norm_labels:
+            if norm_name == other:
+                return False
+        return True
+
+    # 1. 注册表：先精确匹配，再子串匹配（排除其他 IDE）
+    reg_exact = []
+    reg_partial = []
     for entry in _scan_registry_uninstall():
         norm_name = _normalize_id(entry["name"])
-        if norm_label in norm_name:
-            reg_hits.append(entry)
+        if norm_name == norm_label:
+            reg_exact.append(entry)
+        elif _is_exclusive_match(norm_name):
+            reg_partial.append(entry)
+    reg_hits = reg_exact + reg_partial
     for entry in reg_hits:
         # DisplayIcon 优先（直接是 exe 路径）
         if entry["icon"] and entry["icon"].lower().endswith(".exe"):
@@ -603,9 +634,10 @@ def _lookup_windows_app_via_system(label: str) -> tuple[str, str]:
                 except (PermissionError, OSError):
                     pass
 
-    # 2. 开始菜单快捷方式：BaseName 通常就是产品名（如 "Trae CN.lnk"）
+    # 2. 开始菜单快捷方式：精确匹配优先，子串匹配排除其他 IDE
     for name, target in _scan_start_menu_shortcuts().items():
-        if norm_label == _normalize_id(name) or norm_label in _normalize_id(name):
+        norm_name = _normalize_id(name)
+        if norm_name == norm_label or _is_exclusive_match(norm_name):
             if target.lower().endswith(".exe") and Path(target).exists():
                 # 快捷方式无版本号，尝试从注册表反查
                 ver = _lookup_version_from_registry(name)
@@ -644,14 +676,27 @@ def lookup_windows_uninstall_cmd(label: str) -> str:
     norm_label = _normalize_id(label)
     if not norm_label:
         return ""
-    # 优先精确匹配，其次包含匹配
+    # 收集其他 IDE 的规范化 label，子串匹配时排除（避免 Trae 命中 Trae Solo CN）
+    other_norm_labels = set()
+    for k, v in IDE_DETECT_META.items():
+        other_label = v.get("label", "")
+        if other_label and other_label != label:
+            other_norm = _normalize_id(other_label)
+            if other_norm and other_norm != norm_label:
+                other_norm_labels.add(other_norm)
+
+    def _is_exclusive(norm_name: str) -> bool:
+        if norm_label not in norm_name:
+            return False
+        return norm_name not in other_norm_labels
+
     exact = []
     partial = []
     for entry in _scan_registry_uninstall():
         norm_name = _normalize_id(entry["name"])
-        if norm_label == norm_name:
+        if norm_name == norm_label:
             exact.append(entry)
-        elif norm_label in norm_name:
+        elif _is_exclusive(norm_name):
             partial.append(entry)
     for entry in exact + partial:
         cmd = entry.get("quiet_uninstall_cmd", "") or entry.get("uninstall_cmd", "")
