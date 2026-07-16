@@ -581,16 +581,16 @@ def _lookup_windows_app_via_system(label: str) -> tuple[str, str]:
                 other_norm_labels.add(other_norm)
 
     def _is_exclusive_match(norm_name: str) -> bool:
-        """norm_name 包含 norm_label，但不能完全匹配其他 IDE 的 label（避免子串误匹配）。
+        """norm_name 包含 norm_label，但不能包含更具体的其他 IDE label（避免子串误匹配）。
 
-        例：norm_label="trae"，norm_name="traesolocn" → 排除（traesolocn 完全匹配 Trae Solo CN）
-            norm_label="traecn"，norm_name="traecn" → 保留（精确匹配）
+        只排除比 norm_label 更长（更具体）的 other label，避免双向排除：
+        - Trae("trae") 检测 "traecnuser" → 排除（包含更长的 "traecn"）
+        - TraeCN("traecn") 检测 "traecnuser" → 保留（"trae" 比 "traecn" 短，不排除）
         """
         if norm_label not in norm_name:
             return False
-        # 若 norm_name 恰好是其他 IDE 的 label 规范化结果，排除
         for other in other_norm_labels:
-            if norm_name == other:
+            if len(other) > len(norm_label) and other in norm_name:
                 return False
         return True
 

@@ -3,9 +3,11 @@ import { storeToRefs } from 'pinia'
 import { onMounted } from 'vue'
 import { useIdeStore } from '../stores/ide'
 import { useSyncStore } from '../stores/sync'
+import { useUiStore } from '../stores/ui'
 
 const ide = useIdeStore()
 const sync = useSyncStore()
+const ui = useUiStore()
 const {
   ideDetectStats, ideDetecting, ideInstallInfo, ideInstallInfoLoaded,
   installedIdes, notInstalledIdes, sessionableIdes, showNotInstalled,
@@ -23,6 +25,17 @@ const {
   openShareModal, importSession,
 } = ide
 const { onIdeDragStart, onIdeDragOver, onIdeDrop, onIdeDragEnd } = sync
+
+/** 双击路径复制到剪贴板 */
+async function copyPath(path: string | undefined) {
+  if (!path) return
+  try {
+    await navigator.clipboard.writeText(path)
+    ui.toast('已复制路径', 'ok')
+  } catch {
+    ui.toast('复制失败', 'err')
+  }
+}
 
 function markText(label: string): string {
   const words = label.split(/\s+/).filter(Boolean)
@@ -154,7 +167,7 @@ onMounted(() => {
             </div>
             <div class="path" :title="currentPath(it) || (currentInfo(it) ? '未安装' : '—')">
               <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-              <span>{{ currentPath(it) || (currentInfo(it) ? '未安装' : '—') }}</span>
+              <span @dblclick="copyPath(currentPath(it))">{{ currentPath(it) || (currentInfo(it) ? '未安装' : '—') }}</span>
             </div>
           </div>
           <div class="tile-foot">

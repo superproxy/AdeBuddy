@@ -686,42 +686,51 @@ def uninstall_ide(ide_key: str, mode: str = "cli", force: bool = False) -> dict:
                 "message": "未安装 Homebrew 或 brew uninstall 失败", "cmd": "", "stdout": "", "stderr": ""}
 
     if method == "npm":
-        if not shutil.which("npm"):
-            return {"ok": False, "ide": ide_key, "mode": mode, "method": "npm",
-                    "message": "未安装 npm", "cmd": "", "stdout": "", "stderr": ""}
-        cmd = ["npm", "uninstall", "-g", package]
-        r = _run_cmd(cmd, timeout=300)
-        if r["ok"]:
-            # npm uninstall 返回成功，但可能没真正删掉（多 npm 环境如 nvm vs homebrew）
-            # 检查二进制是否还在，在则 fallback uninstall_cmd
-            cli_names = IDE_INSTALL_META.get(ide_key, {}).get("cli_install", {}).get("cli_names", [])
-            # 从 detect.py 的 IDE_DETECT_META 获取 cli_names
-            try:
-                from .detect import IDE_DETECT_META
-                cli_names = IDE_DETECT_META.get(ide_key, {}).get("cli_names", cli_names)
-            except Exception:
-                pass
-            still_exists = any(shutil.which(n) for n in cli_names) if cli_names else False
-            if not still_exists:
-                return {
-                    "ok": True, "ide": ide_key, "mode": mode, "method": "npm",
-                    "message": "卸载成功", "cmd": r["cmd"],
-                    "stdout": r["stdout"][-2000:], "stderr": r["stderr"][-2000:],
-                }
-        # npm uninstall 失败或二进制仍在，fallback uninstall_cmd（按平台选 shell：
-        # Windows 用 cmd /c，macOS/Linux 用 bash -c）
+        # 获取 cli_names 用于校验二进制是否真正删除
+        cli_names = IDE_INSTALL_META.get(ide_key, {}).get("cli_install", {}).get("cli_names", [])
+        try:
+            from .detect import IDE_DETECT_META
+            cli_names = IDE_DETECT_META.get(ide_key, {}).get("cli_names", cli_names)
+        except Exception:
+            pass
+
+        if not force:
+            if not shutil.which("npm"):
+                return {"ok": False, "ide": ide_key, "mode": mode, "method": "npm",
+                        "message": "未安装 npm", "cmd": "", "stdout": "", "stderr": ""}
+            cmd = ["npm", "uninstall", "-g", package]
+            r = _run_cmd(cmd, timeout=300)
+            if r["ok"]:
+                # npm uninstall 返回成功，但可能没真正删掉（多 npm 环境如 nvm vs homebrew）
+                # 检查二进制是否还在，在则 fallback uninstall_cmd
+                still_exists = any(shutil.which(n) for n in cli_names) if cli_names else False
+                if not still_exists:
+                    return {
+                        "ok": True, "ide": ide_key, "mode": mode, "method": "npm",
+                        "message": "卸载成功", "cmd": r["cmd"],
+                        "stdout": r["stdout"][-2000:], "stderr": r["stderr"][-2000:],
+                    }
+        # force 模式 或 npm uninstall 失败/二进制仍在 → fallback uninstall_cmd 强删
+        # 按平台选 shell：Windows 用 cmd /c，macOS/Linux 用 bash -c
         uninstall_cmd = _get_uninstall_cmd(install_meta)
         if uninstall_cmd:
             r2 = _run_uninstall_cmd(uninstall_cmd)
+            ok = r2["ok"]
+            # exit=0 不代表真删掉（Windows exit /b 0 / macOS ; true 都强制返回 0）
+            # 校验 cli 二进制是否还在
+            if ok and cli_names:
+                ok = not any(shutil.which(n) for n in cli_names)
+            msg_prefix = "强制卸载成功" if force else "卸载成功"
+            msg_fail = "强制卸载失败" if force else "卸载失败"
+            message = msg_prefix if ok else f"{msg_fail} (exit={r2['returncode']}，二进制可能被占用或 PATH 缓存，请重启终端后重试)"
             return {
-                "ok": r2["ok"], "ide": ide_key, "mode": mode, "method": "npm",
-                "message": "卸载成功" if r2["ok"] else f"卸载失败 (exit={r2['returncode']})",
+                "ok": ok, "ide": ide_key, "mode": mode, "method": "npm",
+                "message": message,
                 "cmd": uninstall_cmd, "stdout": r2["stdout"][-2000:], "stderr": r2["stderr"][-2000:],
             }
         return {
-            "ok": r["ok"], "ide": ide_key, "mode": mode, "method": "npm",
-            "message": "卸载成功" if r["ok"] else f"卸载失败 (exit={r['returncode']})",
-            "cmd": r["cmd"], "stdout": r["stdout"][-2000:], "stderr": r["stderr"][-2000:],
+            "ok": False, "ide": ide_key, "mode": mode, "method": "npm",
+            "message": "卸载失败 (无 fallback uninstall_cmd)", "cmd": "", "stdout": "", "stderr": "",
         }
 
     return {"ok": False, "ide": ide_key, "mode": mode, "method": method,
