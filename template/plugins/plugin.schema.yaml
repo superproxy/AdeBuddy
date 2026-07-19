@@ -1,35 +1,205 @@
 # Plugin Configuration Schema (YAML 表达的 JSON Schema draft-07)
-# 通用插件配置格式，默认远程 skill，优先检查本地缓存
+# 通用插件配置格式（元清单），对齐 Claude Code / Codex CLI / VSCode 主流规范
+# 默认远程 skill，优先检查本地缓存
+#
+# 规范来源（按对齐优先级）：
+#   1. Claude Code  .claude-plugin/plugin.json   (code.claude.com/docs/en/plugins-reference)
+#      - 必填：name；元数据：version/description/author{object}/homepage/repository/license/keywords/defaultEnabled
+#      - 组件字段 skills/commands/agents/hooks/mcpServers/outputStyles/lspServers 支持 string|array|object
+#      - 扩展字段：userConfig/dependencies/channels；未识别字段会被忽略（扩展字段安全）
+#   2. Codex CLI    .codex-plugin/plugin.json     (github.com/openai/codex)
+#      - 必填：name/version/description/author.name/interface
+#      - interface{displayName,shortDescription,longDescription,developerName,category,capabilities,
+#         websiteURL,privacyPolicyURL,termsOfServiceURL,defaultPrompt,brandColor,composerIcon,logo,logoDark,screenshots}
+#      - apps/mcpServers(string|object)/skills(string)/hooks(string)
+#   3. AdeBuddy 扩展（多 IDE 同步能力）：llm/subagents/rules/commands/envVars/scripts(npm lifecycle)
 $schema: http://json-schema.org/draft-07/schema#
 title: Plugin Configuration
-description: 通用插件配置格式，默认远程 skill，优先检查本地缓存
+description: |
+  通用插件配置格式（元清单）。
+  对齐 Claude Code `.claude-plugin/plugin.json` 与 Codex CLI `.codex-plugin/plugin.json`
+  的标准字段（name/version/description/author/license/keywords/homepage/repository/icon/categories），
+  扩展字段（llm/subagents/rules/commands/hooks/envVars）为 AdeBuddy 多 IDE 同步能力。
+  scripts 字段对齐 npm 生命周期（preinstall/install/postinstall/preuninstall/uninstall/postuninstall/prepare）。
+  Claude Code 会忽略未识别字段，因此 AdeBuddy 扩展字段在跨 IDE 导出时安全。
 type: object
 required:
   - name
   - version
 properties:
+  # ============================================================
+  # 标准字段（对齐 Claude / Codex / VSCode）
+  # ============================================================
+  $schema:
+    type: string
+    description: JSON Schema URL（编辑器自动补全用，运行时忽略，对齐 Claude $schema 字段）
+  manifest_version:
+    type: string
+    description: 清单格式版本（用于未来 schema 升级识别），当前为 "1.0"
+    default: "1.0"
   name:
     type: string
-    description: 插件唯一标识符
+    description: 插件唯一标识符（kebab-case，全小写字母/数字/连字符）
+    pattern: "^[a-z0-9][a-z0-9-]*$"
   version:
     type: string
-    description: 插件版本（语义化版本）
+    description: 插件版本（语义化版本 SemVer，如 1.0.0）
+    pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+"
   description:
     type: string
-    description: 插件功能描述
+    description: 插件功能描述（展示在插件市场和 IDE 列表中）
   author:
+    description: |
+      插件作者。
+      兼容两种格式：字符串（简写）或对象 {name, email, url}（推荐，对齐 npm/Claude/Codex 规范）。
+    oneOf:
+      - type: string
+        description: 作者简写（向后兼容）
+      - type: object
+        properties:
+          name: { type: string, description: 作者姓名 }
+          email: { type: string, description: 作者邮箱 }
+          url: { type: string, description: 作者主页 URL }
+        required: [name]
+        additionalProperties: false
+  license:
     type: string
-    description: 插件作者
-  scripts:
+    description: 开源许可证标识符（SPDX，如 MIT、Apache-2.0、ISC）
+    examples: ["MIT", "Apache-2.0", "ISC"]
+  keywords:
+    type: array
+    description: 发现标签（用于市场搜索）
+    items: { type: string }
+    uniqueItems: true
+  homepage:
+    type: string
+    description: 文档主页 URL
+    format: uri
+  repository:
+    oneOf:
+      - type: string
+        description: 源码仓库 URL（简写）
+        format: uri
+      - type: object
+        description: 源码仓库对象（对齐 npm package.json）
+        properties:
+          type: { type: string, description: 仓库类型（git/svn 等） }
+          url: { type: string, description: 仓库 URL }
+          directory: { type: string, description: 子目录路径（monorepo 场景） }
+        required: [url]
+  categories:
+    type: array
+    description: 插件分类（用于市场归类，对齐 Codex interface.category / VSCode categories）
+    items:
+      type: string
+      enum:
+        - coding
+        - frontend
+        - backend
+        - fullstack
+        - embedded
+        - testing
+        - security
+        - devops
+        - ai
+        - office
+        - browser
+        - database
+        - documentation
+        - other
+    uniqueItems: true
+  icon:
+    type: string
+    description: 插件图标路径（相对插件根目录，推荐 128x128 PNG）
+    examples: ["icon.png", "assets/icon.png"]
+  defaultEnabled:
+    type: boolean
+    description: |
+      安装后是否默认启用（默认 true）。
+      对齐 Claude Code `defaultEnabled` 字段（v2.1.154+）。
+      对于增加成本或范围的插件（如连接外部服务），建议设为 false，让用户主动启用。
+    default: true
+  dependencies:
+    type: array
+    description: |
+      依赖的其他插件列表（带可选 semver 版本约束）。
+      对齐 Claude Code `dependencies` 字段。
+    items:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, description: 依赖插件名 }
+        version:
+          type: string
+          description: semver 版本约束（如 "~2.1.0"、"^1.0.0"）
+  userConfig:
     type: object
-    description: 插件脚本
+    description: |
+      用户可配置项（启用时提示用户输入）。
+      对齐 Claude Code `userConfig` 字段，用于替代手编 settings.json。
+    additionalProperties:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [string, number, boolean]
+          description: 值类型
+        label: { type: string, description: 显示标签 }
+        description: { type: string, description: 配置项说明 }
+        default: { description: 默认值（任意类型） }
+        required: { type: boolean, description: 是否必填, default: false }
+  apps:
+    type: string
+    description: |
+      App manifest 路径（用于 plugin 集成的 .app.json）。
+      对齐 Codex CLI `apps` 字段。
+  interface:
+    type: object
+    description: |
+      UI/UX 元数据块（市场展示用）。
+      对齐 Codex CLI `interface` 字段，包含展示名称、分类、能力声明、品牌色、图标、截图等。
+      AdeBuddy 导出至 Codex 时使用；导出至 Claude 时这些字段会被忽略（Claude 仅识别顶层标准字段）。
     properties:
-      install: { type: string, description: 安装脚本 }
-      init: { type: string, description: 初始化脚本 }
-      uninstall: { type: string, description: 卸载脚本 }
+      displayName: { type: string, description: 用户可见标题 }
+      shortDescription: { type: string, description: 简短副标题（紧凑视图） }
+      longDescription: { type: string, description: 详细页长描述 }
+      developerName: { type: string, description: 发布者名称 }
+      category:
+        type: string
+        description: 插件分类桶（Codex 用于市场归类）
+        examples: ["Productivity", "Coding", "AI", "Office"]
+      capabilities:
+        type: array
+        description: 能力声明列表
+        items: { type: string }
+        examples: [["Interactive", "Write"]]
+      websiteURL: { type: string, description: 公共网站 URL（绝对 https） }
+      privacyPolicyURL: { type: string, description: 隐私政策 URL }
+      termsOfServiceURL: { type: string, description: 服务条款 URL }
+      defaultPrompt:
+        type: array
+        description: 起始 prompt 列表（最多 3 项，每项 ≤128 字符）
+        items: { type: string }
+        maxItems: 3
+      brandColor:
+        type: string
+        description: 品牌主题色（hex）
+        examples: ["#3B82F6"]
+      composerIcon: { type: string, description: composer 图标路径 }
+      logo: { type: string, description: logo 资源路径（亮色） }
+      logoDark: { type: string, description: logo 资源路径（暗色模式） }
+      screenshots:
+        type: array
+        description: 截图资源路径列表（PNG，相对 ./assets/）
+        items: { type: string }
+    additionalProperties: false
+
+  # ============================================================
+  # 组件字段（inline 风格，导出到具体 IDE 时再拆分为 .mcp.json/hooks.json 等）
+  # ============================================================
   mcpServers:
     type: object
-    description: MCP 服务器配置
+    description: MCP 服务器配置（inline；导出到 Claude/Codex 时拆分为 .mcp.json）
     additionalProperties:
       type: object
       properties:
@@ -64,9 +234,62 @@ properties:
         skill: { type: string, description: skill 名称（如果与 name 不同） }
         url: { type: string, description: 第三方市场 URL（如果不是 GitHub） }
         description: { type: string, description: skill 描述 }
+  subagents:
+    type: array
+    description: Subagent 角色名列表（引用已存在的 subagent 定义）
+    items: { type: string }
+  rules:
+    type: array
+    description: Rules 文件路径列表
+    items: { type: string }
+  commands:
+    type: array
+    description: Command 名列表（引用已存在的 command 定义）
+    items: { type: string }
+  hooks:
+    description: |
+      Hooks 配置。
+      - false（简写，表示不启用）
+      - true（简写，表示启用，使用插件 config/hooks/hooks.json）
+      - 对象（详细配置，对齐 Claude hooks/hooks.json 结构）
+    oneOf:
+      - type: boolean
+      - type: object
+        properties:
+          enabled: { type: boolean, description: 是否启用 hooks }
+          events:
+            type: array
+            description: 启用的 hook 事件类型（如 SessionStart, PreToolUse, PostToolUse 等）
+            items: { type: string }
+        additionalProperties: true
+
+  # ============================================================
+  # LLM 配置（AdeBuddy 扩展字段，多 IDE 同步用）
+  # ============================================================
+  llm:
+    type: array
+    description: LLM Provider 配置列表（AdeBuddy 扩展，导出到 IDE 时拆分为 llm.yaml）
+    items:
+      type: object
+      required: [provider, protocol]
+      properties:
+        provider: { type: string, description: Provider 标识（如 openai, anthropic, glm） }
+        protocol: { type: string, description: 协议（openai, anthropic 等） }
+        base_url: { type: string, description: API base URL }
+        models:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              name: { type: string }
+
+  # ============================================================
+  # 环境变量（AdeBuddy 扩展字段）
+  # ============================================================
   envVars:
     type: object
-    description: 需要配置的环境变量
+    description: 需要配置的环境变量（AdeBuddy 扩展，导出时合并到 llm.yaml）
     additionalProperties:
       type: object
       required:
@@ -75,3 +298,26 @@ properties:
         description: { type: string, description: 环境变量描述 }
         default: { type: string, description: 默认值 }
         required: { type: boolean, description: 是否必需, default: false }
+
+  # ============================================================
+  # 脚本（对齐 npm 生命周期：preinstall/install/postinstall/preuninstall/uninstall/postuninstall/prepare）
+  # ============================================================
+  scripts:
+    type: object
+    description: |
+      插件脚本，对齐 npm 生命周期。
+      执行顺序：preinstall → install → postinstall；
+      卸载顺序：preuninstall → uninstall → postuninstall；
+      打包前：prepare。
+      向后兼容：旧字段 `init` 等价于 `postinstall`，读取时自动映射。
+    properties:
+      preinstall: { type: string, description: 安装前脚本（如依赖检查） }
+      install: { type: string, description: 主安装脚本（如 npm i -g xxx） }
+      postinstall:
+        type: string
+        description: 安装后初始化脚本（原 `init` 字段，向后兼容读取）
+      preuninstall: { type: string, description: 卸载前脚本（如清理缓存） }
+      uninstall: { type: string, description: 主卸载脚本 }
+      postuninstall: { type: string, description: 卸载后清理脚本 }
+      prepare: { type: string, description: 打包前准备脚本（对齐 npm prepare） }
+    additionalProperties: false

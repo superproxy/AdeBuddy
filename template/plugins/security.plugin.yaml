@@ -2,6 +2,9 @@ name: security
 version: 1.0.0
 description: 安全插件 - 提供安全审计、漏洞识别、代码加固能力
 author: AdeBuddy
+license: MIT
+keywords: [security, audit, owasp, hardening]
+categories: [security]
 mcpServers: {}
 skills:
   # ===== 安全审计角色 =====

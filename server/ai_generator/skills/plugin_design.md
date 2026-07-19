@@ -118,11 +118,19 @@
 
 ## 插件配置格式（plugin.yaml）
 
+> 完整 schema 见 `template/plugins/plugin.schema.yaml`，对齐 Claude Code / Codex CLI / VSCode 规范。
+
 ```yaml
-name: <插件名>          # 必填，英文短名，如 "java-backend-agent"
-version: "1.0.0"
+# ============ 标准字段（对齐 Claude / Codex / VSCode）============
+name: <插件名>          # 必填，kebab-case，如 "java-backend-agent"
+version: "1.0.0"        # 必填，严格 semver
 description: "<中文描述>"
 author: "AdeBuddy"
+license: "MIT"          # SPDX 标识
+keywords: [<kw1>, <kw2>]    # 发现标签（3-7 个）
+categories: [<cat>]     # 分类枚举：coding/frontend/backend/fullstack/embedded/testing/security/devops/ai/office/browser/database/documentation/other
+
+# ============ AdeBuddy 扩展字段（多 IDE 同步能力）============
 
 # MCP 服务声明（可选，从可用 MCP 列表中选择）
 mcpServers:
@@ -160,18 +168,23 @@ commands:
 # Hooks 开关（可选，true 时打包 config/hooks/hooks.json）
 hooks: false
 
-# 安装脚本（可选）
+# 安装脚本（可选，对齐 npm 生命周期）
 scripts:
-  install: "<install_command>"
+  install: "<install_command>"        # 主安装命令
+  postinstall: "<init_command>"       # 安装后初始化（替代旧 init 字段）
 ```
 
 ## 设计原则
 
 - **name** 必须是英文短名，用连字符分隔，如 `java-backend-agent`
 - **version** 默认 "1.0.0"
+- **license** 默认 "MIT"，除非用户指定其他
+- **keywords** 选 3-7 个反映插件能力的英文标签
+- **categories** 选 1-2 个枚举值，避免堆砌
 - **只选择与需求相关的资源**，不要全选
 - 如果用户没提到 MCP，不要添加
 - 如果用户没提到 hooks，设为 false
 - subagents/commands/rules 只引用已存在的名称
 - skills 的 source 优先使用本地技能名或 GitHub 简写
 - 外部市场的 skill 可以引用，source 使用搜索结果中的 install_command
+- scripts 对齐 npm 生命周期，旧 `init` 字段已废弃，改用 `postinstall`

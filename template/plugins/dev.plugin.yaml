@@ -3,6 +3,9 @@ version: 1.0.0
 description: 核心插件 - 提供基础的技能发现、初始化、项目管理能力
 default: true
 author: AdeBuddy
+license: MIT
+keywords: [core, skills, bootstrap]
+categories: [coding]
 mcpServers: {}
 skills:
   - name: superproxy

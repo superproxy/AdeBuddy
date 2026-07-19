@@ -2,6 +2,9 @@ name: testing
 version: 1.0.0
 description: 测试插件 - 提供测试驱动开发、系统化调试、边界用例生成能力
 author: AdeBuddy
+license: MIT
+keywords: [testing, tdd, debugging]
+categories: [testing]
 mcpServers: {}
 skills:
   # ===== 测试驱动开发 =====

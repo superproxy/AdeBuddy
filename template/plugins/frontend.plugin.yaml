@@ -2,6 +2,9 @@ name: frontend
 version: 1.0.0
 description: 前端开发插件 - 提供 React/Next.js 最佳实践、前端 UI 工程、性能优化能力
 author: AdeBuddy
+license: MIT
+keywords: [frontend, react, nextjs, ui-engineering]
+categories: [frontend]
 mcpServers: {}
 skills:
   - name: react-best-practices

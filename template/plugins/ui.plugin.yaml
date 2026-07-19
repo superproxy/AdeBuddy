@@ -2,6 +2,9 @@ name: frontend-design
 version: 1.0.0
 description: 前端设计插件 - 提供 UI/UX 设计和前端开发能力
 author: AdeBuddy
+license: MIT
+keywords: [frontend, design, ui, ux, mastergo]
+categories: [frontend]
 mcpServers:
   mastergo:
     command: npx

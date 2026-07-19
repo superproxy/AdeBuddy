@@ -127,43 +127,90 @@ def update_env_file(env_path: Path, plugin_config: dict) -> None:
 # 插件安装编排
 # ============================================================
 
-def run_plugin_scripts(plugin_config: dict) -> None:
-    """执行插件脚本
+def _normalize_plugin_scripts(scripts: dict) -> dict:
+    """规范化 scripts 字段：旧字段 init 等价于 postinstall（向后兼容）。
 
-    注意：install 脚本失败或超时不阻塞后续 skill 安装，只告警。
+    对齐 npm 生命周期：preinstall/install/postinstall/preuninstall/uninstall/postuninstall/prepare。
+    """
+    if not isinstance(scripts, dict):
+        return {}
+    normalized = dict(scripts)
+    # 向后兼容：scripts.init 等价于 scripts.postinstall
+    if "init" in normalized and "postinstall" not in normalized:
+        normalized["postinstall"] = normalized.pop("init")
+    return normalized
+
+
+def _run_script(cmd: str, label: str, timeout: int = 300) -> bool:
+    """执行单个脚本命令，失败/超时不抛出，返回是否成功。
+
+    失败不阻塞后续步骤（与原 install 行为一致）。
+    """
+    print(f"{COLOR_MAGENTA}[~] 执行 {label}: {cmd}{COLOR_RESET}")
+    try:
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            timeout=timeout,
+            capture_output=False,
+            text=True,
+            encoding='utf-8',
+            errors='ignore'
+        )
+        if result.returncode == 0:
+            print(f"{COLOR_GREEN}[OK] {label} 执行成功{COLOR_RESET}")
+            return True
+        print(f"{COLOR_YELLOW}[!] {label} 执行失败 (exit={result.returncode})，继续后续步骤{COLOR_RESET}")
+        return False
+    except subprocess.TimeoutExpired:
+        print(f"{COLOR_YELLOW}[!] {label} 执行超时 (>{timeout}s)，继续后续步骤{COLOR_RESET}")
+        return False
+    except Exception as e:
+        print(f"{COLOR_YELLOW}[!] {label} 执行错误: {e}，继续后续步骤{COLOR_RESET}")
+        return False
+
+
+def run_plugin_scripts(plugin_config: dict) -> None:
+    """执行插件安装脚本（对齐 npm 生命周期：preinstall → install → postinstall）
+
+    注意：脚本失败或超时不阻塞后续 skill 安装，只告警。
     原因：scripts.install 常含 npm i -g / browser setup 等可能交互或耗时的命令，
-    卡住或失败不应导致 skill 安装（步骤 4）无法执行。
+    卡住或失败不应导致 skill 安装步骤无法执行。
+
+    向后兼容：旧字段 `scripts.init` 自动映射为 `scripts.postinstall`。
     """
     if "scripts" not in plugin_config:
         return
 
-    scripts = plugin_config["scripts"]
+    scripts = _normalize_plugin_scripts(plugin_config["scripts"])
+    if not scripts:
+        return
 
-    # 执行 install 脚本
-    if "install" in scripts:
-        install_cmd = scripts["install"]
-        print(f"{COLOR_MAGENTA}[~] 执行插件安装脚本: {install_cmd}{COLOR_RESET}")
-        try:
-            # 不 capture_output，让用户看到实时进度（避免交互式命令卡死时无任何输出）
-            # 设置 timeout 防止交互式命令无限阻塞后续 skill 安装
-            result = subprocess.run(
-                install_cmd,
-                shell=True,
-                timeout=300,  # 5 分钟超时，避免 browser setup 卡死
-                capture_output=False,
-                text=True,
-                encoding='utf-8',
-                errors='ignore'
-            )
-            if result.returncode == 0:
-                print(f"{COLOR_GREEN}[OK] 脚本执行成功{COLOR_RESET}")
-            else:
-                # 失败不阻塞，继续安装 skill
-                print(f"{COLOR_YELLOW}[!] 脚本执行失败 (exit={result.returncode})，继续安装 skill{COLOR_RESET}")
-        except subprocess.TimeoutExpired:
-            print(f"{COLOR_YELLOW}[!] 脚本执行超时 (>300s)，可能为交互式命令，继续安装 skill{COLOR_RESET}")
-        except Exception as e:
-            print(f"{COLOR_YELLOW}[!] 脚本执行错误: {e}，继续安装 skill{COLOR_RESET}")
+    # 按 npm 生命周期顺序执行
+    for stage in ("preinstall", "install", "postinstall"):
+        if stage in scripts and scripts[stage]:
+            _run_script(scripts[stage], f"插件 {stage} 脚本")
+
+    # prepare 通常在打包阶段，安装时也执行一次（与 npm 行为一致）
+    if "prepare" in scripts and scripts["prepare"]:
+        _run_script(scripts["prepare"], "插件 prepare 脚本")
+
+
+def run_plugin_uninstall_scripts(plugin_config: dict) -> None:
+    """执行插件卸载脚本（对齐 npm 生命周期：preuninstall → uninstall → postuninstall）
+
+    失败不阻塞后续清理步骤。
+    """
+    if "scripts" not in plugin_config:
+        return
+
+    scripts = _normalize_plugin_scripts(plugin_config["scripts"])
+    if not scripts:
+        return
+
+    for stage in ("preuninstall", "uninstall", "postuninstall"):
+        if stage in scripts and scripts[stage]:
+            _run_script(scripts[stage], f"插件 {stage} 脚本", timeout=120)
 
 
 def install_skills(plugin_config: dict, source_dir: Path, use_symlink: bool = False) -> tuple:
@@ -225,11 +272,11 @@ def install_plugin(
         print(f"\n{COLOR_YELLOW}[!] 这是模拟运行，不进行实际修改{COLOR_RESET}")
         return
 
-    # 工作流程：执行 install 脚本 → 下载 skill → 合并 envVars 到 llm.yaml
+    # 工作流程：执行 install 脚本（preinstall → install → postinstall）→ 下载 skill → 合并 envVars 到 llm.yaml
     # plugin.yaml 中的 mcpServers 不再合并到 mcp.yaml，而是由 agentctl generate
     # 阶段同时读取 mcp.yaml + plugins/*.plugin.yaml 合并生成 mcp.json（保持 mcp.yaml 纯净）
     # 后续由 agentctl setup/sync 完成「同步到 IDE」与「skill 同步到 IDE」
-    print(f"\n{COLOR_MAGENTA}步骤 1/3: 执行插件 install 脚本{COLOR_RESET}")
+    print(f"\n{COLOR_MAGENTA}步骤 1/3: 执行插件脚本（preinstall → install → postinstall）{COLOR_RESET}")
     run_plugin_scripts(plugin_config)
 
     print(f"\n{COLOR_MAGENTA}步骤 2/3: 下载技能{COLOR_RESET}")
@@ -332,8 +379,12 @@ def uninstall_plugin(
     print(f"\n{COLOR_WHITE}插件名称: {name}{COLOR_RESET}")
     print(f"{COLOR_WHITE}版本: {plugin_config.get('version', '')}{COLOR_RESET}")
 
+    # Step 0: 执行卸载脚本（preuninstall → uninstall → postuninstall）
+    print(f"\n{COLOR_MAGENTA}步骤 0/4: 执行卸载脚本{COLOR_RESET}")
+    run_plugin_uninstall_scripts(plugin_config)
+
     # Step 1: 删除 config/skills/ 下该插件的 skill
-    print(f"\n{COLOR_MAGENTA}步骤 1/3: 删除已安装的 skill{COLOR_RESET}")
+    print(f"\n{COLOR_MAGENTA}步骤 1/4: 删除已安装的 skill{COLOR_RESET}")
     agents_skills_dir = project_root / "config" / "skills"
     skills_list = plugin_config.get('skills', []) or []
     removed_skills = 0
@@ -352,7 +403,7 @@ def uninstall_plugin(
         print(f"  {COLOR_DARKGRAY}[~] 无已安装的 skill 需要删除{COLOR_RESET}")
 
     # Step 2: 从 llm.yaml 移除 envVars
-    print(f"\n{COLOR_MAGENTA}步骤 2/3: 从 llm.yaml 移除环境变量{COLOR_RESET}")
+    print(f"\n{COLOR_MAGENTA}步骤 2/4: 从 llm.yaml 移除环境变量{COLOR_RESET}")
     env_vars = plugin_config.get('envVars', {}) or {}
     if env_vars and env_path.exists():
         env_config = load_env_config_file(env_path)
@@ -373,7 +424,7 @@ def uninstall_plugin(
         print(f"  {COLOR_DARKGRAY}[~] 插件无 envVars 或 llm.yaml 不存在{COLOR_RESET}")
 
     # Step 3: 可选删除 plugin.yaml + 从已安装清单移除
-    print(f"\n{COLOR_MAGENTA}步骤 3/3: 清理插件配置文件{COLOR_RESET}")
+    print(f"\n{COLOR_MAGENTA}步骤 3/4: 清理插件配置文件{COLOR_RESET}")
     remove_from_installed(project_root, name)
     print(f"  {COLOR_GREEN}[OK] 从已安装清单移除: {name}{COLOR_RESET}")
     if remove_plugin_file:

@@ -2,6 +2,9 @@ name: trae-work-skills
 version: 1.0.0
 description: Trae Work 必装 14 个 Skill - 覆盖开发工具、效率提升、界面设计、数据分析与内容创作
 author: AdeBuddy
+license: MIT
+keywords: [trae-work, skills, git, react, figma, data-analysis]
+categories: [office, coding]
 source: https://docs.trae.cn/work_14-must-install-skills-for-trae-solo
 mcpServers: {}
 skills:

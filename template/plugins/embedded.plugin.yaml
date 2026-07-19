@@ -2,6 +2,9 @@ name: embedded
 version: 1.0.0
 description: 嵌入式开发插件 - 提供 Keil/GCC 构建、J-Link/OpenOCD 调试、串口/CAN 通信能力
 author: AdeBuddy
+license: MIT
+keywords: [embedded, keil, gcc, jlink, openocd, serial, can]
+categories: [embedded]
 mcpServers: {}
 skills:
   - name: embeddedskills

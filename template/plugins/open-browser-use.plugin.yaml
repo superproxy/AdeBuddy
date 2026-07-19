@@ -2,6 +2,9 @@ name: open-browser-use
 version: 1.0.0
 description: 提供浏览器自动化能力
 author: AdeBuddy
+license: MIT
+keywords: [browser-automation, mcp, open-browser-use]
+categories: [browser, ai]
 scripts:
   install: npm i -g open-browser-use && open-browser-use setup
 mcpServers:

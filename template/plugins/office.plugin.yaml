@@ -2,6 +2,9 @@ name: office
 version: 1.0.0
 description: 常用办公插件
 author: AdeBuddy
+license: MIT
+keywords: [office, document, browser, automation]
+categories: [office, browser]
 scripts:
   install: npm i -g open-computer-use && npm i -g open-browser-use && open-browser-use setup
 mcpServers:

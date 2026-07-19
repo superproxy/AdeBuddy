@@ -2,6 +2,9 @@ name: java
 version: 1.0.0
 description: Java 开发插件 - 提供 Spring Boot、API 设计、后端架构、安全加固能力
 author: AdeBuddy
+license: MIT
+keywords: [java, spring-boot, backend, api-design, architecture]
+categories: [backend]
 mcpServers: {}
 skills:
   - name: api-design
