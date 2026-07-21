@@ -282,7 +282,7 @@ async function confirmImport() {
       <div class="kpi">
         <b>{{ keyCount }}</b>
         <span>变量总数</span>
-        <em>{{ keysPath || 'config/mcp/keys.yaml' }}</em>
+        <em>{{ keysPath || 'config/keys/keys.yaml' }}</em>
       </div>
     </div>
 

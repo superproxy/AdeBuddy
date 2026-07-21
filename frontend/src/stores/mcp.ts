@@ -38,7 +38,7 @@ export const useMcpStore = defineStore('mcp', () => {
   const pulseMcpConfigured = ref(false)
   const mcpForm = reactive({ name: '', type: '', command: '', args: '', url: '', headers: '', env: '', paste: '' })
   const editingMcp = ref('')
-  const editMcpForm = reactive({ type: '', command: '', args: '', url: '', headers: '', env: '' })
+  const editMcpForm = reactive({ name: '', type: '', command: '', args: '', url: '', headers: '', env: '' })
   const listFilter = ref<'all' | 'on' | 'off'>('all')
   const listQuery = ref('')
 
@@ -326,6 +326,7 @@ export const useMcpStore = defineStore('mcp', () => {
   function startEditMcp(name: string) {
     const cfg = mcpTemplate.mcpServers[name]
     editingMcp.value = name
+    editMcpForm.name = name
     editMcpForm.type = cfg.type || ''
     editMcpForm.command = cfg.command || ''
     editMcpForm.args = (cfg.args || []).join(', ')
@@ -339,6 +340,16 @@ export const useMcpStore = defineStore('mcp', () => {
     if (!name) return
     const cfg = mcpTemplate.mcpServers[name]
     const disabled = cfg.disabled
+    // 新名称：trim + 校验
+    const newName = editMcpForm.name.trim()
+    if (!newName) {
+      ui.toast('名称不能为空', 'err')
+      return
+    }
+    if (newName !== name && mcpTemplate.mcpServers[newName]) {
+      ui.toast('名称已存在: ' + newName, 'err')
+      return
+    }
     const newCfg: any = {}
     if (editMcpForm.type) newCfg.type = editMcpForm.type
     if (editMcpForm.command) newCfg.command = editMcpForm.command
@@ -347,10 +358,21 @@ export const useMcpStore = defineStore('mcp', () => {
     try { if (editMcpForm.headers.trim()) newCfg.headers = JSON.parse(editMcpForm.headers) } catch { ui.toast('headers JSON 错误', 'err'); return }
     try { if (editMcpForm.env.trim()) newCfg.env = JSON.parse(editMcpForm.env) } catch { ui.toast('env JSON 错误', 'err'); return }
     if (disabled !== undefined) newCfg.disabled = disabled
-    mcpTemplate.mcpServers[name] = newCfg
-    editingMcp.value = ''
+    // 名称变更：删除旧 key，写入新 key；保持顺序（用临时对象重建）
+    if (newName !== name) {
+      const reordered: any = {}
+      for (const k of Object.keys(mcpTemplate.mcpServers)) {
+        if (k === name) reordered[newName] = newCfg
+        else reordered[k] = mcpTemplate.mcpServers[k]
+      }
+      mcpTemplate.mcpServers = reordered
+      editingMcp.value = ''
+    } else {
+      mcpTemplate.mcpServers[name] = newCfg
+      editingMcp.value = ''
+    }
     const r = await api('/api/mcp/save', { method: 'POST', body: JSON.stringify({ data: mcpTemplate }) })
-    r.ok ? ui.toast('已保存 ' + name) : ui.toast('保存失败: ' + r.error, 'err')
+    r.ok ? ui.toast('已保存 ' + newName) : ui.toast('保存失败: ' + r.error, 'err')
   }
   async function saveMcpConfig() {
     const r = await api('/api/mcp-config', { method: 'POST', body: JSON.stringify({ data: mcpConfigData }) })

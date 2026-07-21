@@ -571,6 +571,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
               </div>
               <div class="sm-body">
                 <template v-if="drawer === 'edit'">
+                  <div class="field"><label>name</label>
+                    <input
+                      v-model="editMcpForm.name"
+                      type="text"
+                      placeholder="服务名称（如 tavily-mcp）"
+                      aria-label="服务名称"
+                    />
+                  </div>
                   <div class="field"><label>type</label>
                     <select v-model="editMcpForm.type">
                       <option value="">stdio</option>

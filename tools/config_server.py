@@ -131,7 +131,10 @@ ENV_FILE = PROJECT_ROOT / "env.yaml"
 LLM_FILE = PROJECT_ROOT / "config" / "llm" / "llm.yaml"
 MCP_CONFIG_FILE = PROJECT_ROOT / "config" / "mcp" / "mcp.yaml"
 # 独立密钥/环境变量文件（优先级高于 mcp.yaml.mcp 段）
-KEYS_FILE = PROJECT_ROOT / "config" / "mcp" / "keys.yaml"
+# 独立目录 config/keys/，与 mcp/llm 平级，强调"跨配置共享的密钥层"定位
+KEYS_FILE = PROJECT_ROOT / "config" / "keys" / "keys.yaml"
+# 旧路径（向后兼容迁移用）
+KEYS_FILE_LEGACY = PROJECT_ROOT / "config" / "mcp" / "keys.yaml"
 # 拆分后的示例模板（可安全提交）
 LLM_EXAMPLE = PROJECT_ROOT / "template" / "llm" / "llm-env-example.yaml"
 MCP_CONFIG_EXAMPLE = PROJECT_ROOT / "template" / "mcp" / "mcp-env-example.yaml"
@@ -415,7 +418,7 @@ def dist_assets(filename):
 
 @app.route("/api/version", methods=["GET"])
 def api_version():
-    """返回应用版本号。构建时由 build.py 写入 tools/dist-ui/version.json。"""
+    """返回应用版本号。构建时由 build.py 写入 tools/dist-ui/version.json，供运行时 /api/version 读取。"""
     import json
     version_file = PROJECT_ROOT / "tools" / "dist-ui" / "version.json"
     if version_file.exists():
@@ -425,6 +428,123 @@ def api_version():
         except Exception:
             pass
     return jsonify({"version": "dev", "build_time": ""})
+
+
+# ============================================================
+# 升级检查 API
+# ============================================================
+GITHUB_REPO = "superproxy/AdeBuddy"
+GITHUB_RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
+
+
+def _parse_version(v: str):
+    """把 'v1.10.2' 解析为 (1, 10, 2) 元组，便于比较。"""
+    v = (v or "").strip().lstrip("vV")
+    parts = re.split(r"[.\-+]", v)
+    result = []
+    for p in parts[:3]:
+        try:
+            result.append(int(p))
+        except (ValueError, TypeError):
+            result.append(0)
+    while len(result) < 3:
+        result.append(0)
+    return tuple(result)
+
+
+@app.route("/api/upgrade/check", methods=["GET"])
+def upgrade_check():
+    """检查 GitHub Release 是否有新版本。
+
+    返回：
+      {
+        "ok": true,
+        "current": "1.10.2",
+        "latest": "1.11.0",
+        "has_upgrade": true,
+        "release_url": "https://github.com/.../releases/tag/v1.11.0",
+        "release_notes": "...",  # release body（markdown）
+        "published_at": "2026-...",
+        "downloads": [
+          {"platform": "windows", "filename": "AdeBuddy-Setup-1.11.0-x64.exe", "url": "...", "size": 12345678},
+          {"platform": "macos", "filename": "AdeBuddy-1.11.0-macos.pkg", "url": "...", "size": 23456789}
+        ]
+      }
+
+    失败时返回 {ok: false, error: "..."}
+    """
+    import urllib.request
+    import urllib.error
+
+    # 读取当前版本
+    current = "dev"
+    version_file = PROJECT_ROOT / "tools" / "dist-ui" / "version.json"
+    if version_file.exists():
+        try:
+            with open(version_file, "r", encoding="utf-8") as f:
+                current = (json.load(f) or {}).get("version") or "dev"
+        except Exception:
+            pass
+
+    # 开发模式直接返回无升级
+    if current == "dev":
+        return jsonify({
+            "ok": True,
+            "current": "dev",
+            "latest": None,
+            "has_upgrade": False,
+            "release_url": GITHUB_RELEASES_URL,
+            "downloads": [],
+            "note": "开发模式不检查升级",
+        })
+
+    try:
+        req = urllib.request.Request(
+            GITHUB_RELEASES_API,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "AdeBuddy-Updater/1.0",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.URLError as e:
+        return jsonify({"ok": False, "error": f"网络错误: {e}"}), 502
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"解析失败: {e}"}), 500
+
+    latest = (data.get("tag_name") or "").lstrip("vV")
+    has_upgrade = bool(latest) and _parse_version(latest) > _parse_version(current)
+
+    # 收集 Windows / macOS 安装包
+    downloads = []
+    for asset in data.get("assets", []) or []:
+        name = asset.get("name", "")
+        url = asset.get("browser_download_url", "")
+        size = asset.get("size", 0)
+        if not name or not url:
+            continue
+        lower = name.lower()
+        if lower.endswith(".exe") and "x64" in lower:
+            downloads.append({"platform": "windows", "filename": name, "url": url, "size": size})
+        elif lower.endswith(".pkg"):
+            downloads.append({"platform": "macos", "filename": name, "url": url, "size": size})
+        elif lower.endswith(".dmg"):
+            downloads.append({"platform": "macos-dmg", "filename": name, "url": url, "size": size})
+        elif lower.endswith(".zip") and "macos" in lower:
+            downloads.append({"platform": "macos-zip", "filename": name, "url": url, "size": size})
+
+    return jsonify({
+        "ok": True,
+        "current": current,
+        "latest": latest,
+        "has_upgrade": has_upgrade,
+        "release_url": data.get("html_url") or GITHUB_RELEASES_URL,
+        "release_notes": data.get("body") or "",
+        "published_at": data.get("published_at") or "",
+        "downloads": downloads,
+    })
 
 
 # ============================================================
@@ -674,22 +794,38 @@ def delete_mcp_config_key(key):
 
 
 # ============================================================
-# Keys API (config/mcp/keys.yaml - 独立密钥/环境变量层)
+# Keys API (config/keys/keys.yaml - 独立密钥/环境变量层)
 # ============================================================
 def _ensure_keys_file() -> Path:
     """确保 keys.yaml 存在。优先级：
-      1. keys.yaml 已存在 → 直接返回
-      2. mcp.yaml 有 mcp: 段且非空 → 迁移到 keys.yaml（清空 mcp.yaml.mcp）
-      3. 创建空模板 {"mcp": {}}
+      1. 新路径 config/keys/keys.yaml 已存在 → 直接返回
+      2. 旧路径 config/mcp/keys.yaml 存在 → 迁移到新路径，删除旧文件
+      3. mcp.yaml 有 mcp: 段且非空 → 迁移到 keys.yaml（清空 mcp.yaml.mcp）
+      4. 创建空模板 {"mcp": {}}
     """
     if KEYS_FILE.exists():
         return KEYS_FILE
+    # 旧路径迁移：config/mcp/keys.yaml → config/keys/keys.yaml
+    try:
+        if KEYS_FILE_LEGACY.exists():
+            legacy_data = load_env_config_file(KEYS_FILE_LEGACY) or {}
+            KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            save_env_config_file(KEYS_FILE, legacy_data)
+            # 删除旧文件，避免双源冲突
+            try:
+                KEYS_FILE_LEGACY.unlink()
+            except Exception:
+                pass
+            return KEYS_FILE
+    except Exception:
+        pass
     # 从 mcp.yaml.mcp 段迁移
     try:
         if MCP_CONFIG_FILE.exists():
             mcp_full = load_env_config_file(MCP_CONFIG_FILE) or {}
             mcp_keys = mcp_full.get("mcp", {}) or {}
             if isinstance(mcp_keys, dict) and mcp_keys:
+                KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
                 save_env_config_file(KEYS_FILE, {"mcp": mcp_keys})
                 # 清空 mcp.yaml.mcp 段（避免双源冲突）
                 mcp_full["mcp"] = {}
@@ -697,6 +833,7 @@ def _ensure_keys_file() -> Path:
                 return KEYS_FILE
     except Exception:
         pass
+    KEYS_FILE.parent.mkdir(parents=True, exist_ok=True)
     save_env_config_file(KEYS_FILE, {"mcp": {}})
     return KEYS_FILE
 
