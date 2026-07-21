@@ -20,6 +20,15 @@ const listQuery = ref('')
 const listFilter = ref<'all' | 'on' | 'off'>('all')
 const exportMenu = ref<string | null>(null)
 const dropDragging = ref(false)
+// 视图布局：card 卡片网格 / list 紧凑列表
+const viewMode = ref<'card' | 'list'>((() => {
+  const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('plugin-view-mode') : ''
+  return saved === 'list' ? 'list' : 'card'
+})())
+function setViewMode(m: 'card' | 'list') {
+  viewMode.value = m
+  try { localStorage.setItem('plugin-view-mode', m) } catch {}
+}
 
 const installedCount = computed(() => plugins.value.filter((p) => p.installed).length)
 const skillsTotal = computed(() => plugins.value.reduce((a, p) => a + (p.skills_count || 0), 0))
@@ -175,6 +184,14 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
         </div>
       </div>
       <div class="btn-cluster">
+        <div class="seg view-toggle" role="group" aria-label="视图布局">
+          <button type="button" :class="{ on: viewMode === 'card' }" title="卡片布局" aria-label="卡片布局" @click="setViewMode('card')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          </button>
+          <button type="button" :class="{ on: viewMode === 'list' }" title="列表布局" aria-label="列表布局" @click="setViewMode('list')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          </button>
+        </div>
         <button type="button" class="btn btn-ghost btn-sm" @click="selectVisible">全选可见</button>
         <button type="button" class="btn btn-soft btn-sm" @click="triggerImport">
           <svg viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M4 19h16"/></svg>
@@ -388,7 +405,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
     </div>
 
     <!-- 搜索/筛选结果：扁平网格 -->
-    <div v-else class="grid">
+    <div v-else class="grid" :class="{ 'as-list': viewMode === 'list' }">
       <article
         v-for="p in filteredPlugins"
         :key="p.file"
@@ -596,6 +613,53 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   grid-template-columns: repeat(3, 1fr);
   gap: 14px;
   position: relative;
+}
+
+/* —— 列表布局：纯 CSS 切换，复用 card DOM —— */
+.grid.as-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.grid.as-list .card,
+.grid.as-list .card.featured {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  gap: 10px;
+  border-radius: 10px;
+}
+.grid.as-list .card-top {
+  order: 0;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
+}
+.grid.as-list .avatar { width: 28px; height: 28px; border-radius: 8px; font-size: 11px; }
+.grid.as-list .pick { margin: 0; }
+.grid.as-list .recommend-tag { display: none; }
+.grid.as-list .card > div:nth-child(2) {
+  order: 1;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.grid.as-list .title { font-size: 13px; }
+.grid.as-list .desc {
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  margin: 2px 0 0;
+  min-height: 0;
+}
+.grid.as-list .meta { order: 2; flex-shrink: 0; }
+.grid.as-list .card-foot {
+  order: 3;
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+  flex-shrink: 0;
 }
 .card {
   background: var(--bg-elevated); border-radius: 16px; box-shadow: var(--card);

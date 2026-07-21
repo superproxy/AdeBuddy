@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useThemeStore } from '../stores/theme'
 import { useUpgradeStore } from '../stores/upgrade'
 
@@ -24,10 +24,6 @@ const tabTrackRef = ref<HTMLElement | null>(null)
 const tabBtnRefs = ref<Record<string, HTMLElement | null>>({})
 const indicatorStyle = ref({ width: '0px', transform: 'translateX(0px)' })
 const indicatorReady = ref(false)
-
-const statusLabel = computed(() =>
-  buildTime.value ? `构建于 ${buildTime.value.slice(0, 10)}` : '开发模式',
-)
 
 function setTabBtnRef(key: string, el: unknown) {
   tabBtnRefs.value[key] = (el as HTMLElement | null) ?? null
@@ -171,21 +167,45 @@ onBeforeUnmount(() => {
             <h1 class="text-[15px] font-bold tracking-tight leading-tight whitespace-nowrap" style="color: var(--text-primary)">
               AdeBuddy 配置工具
             </h1>
-            <div class="flex items-center gap-2 mt-1">
-              <span
-                v-if="appVersion"
-                class="font-mono text-[11px] font-medium tracking-wide"
-                style="color: var(--text-tertiary)"
-              >v{{ appVersion }}</span>
-              <span
-                class="status-pill inline-flex items-center gap-1.5 text-[11px] font-medium
-                       px-2 py-0.5 rounded-full"
-                :title="statusLabel"
-                :style="{ color: 'var(--text-secondary)' }"
+            <div class="flex items-center gap-1.5 mt-1">
+              <!-- 版本胶囊：发光状态点 + 版本号，点击检查/打开升级 -->
+              <button
+                type="button"
+                class="version-pill"
+                :class="{ 'has-upgrade': upgrade.hasUpgrade, 'is-checking': upgrade.loading }"
+                :title="upgrade.hasUpgrade
+                  ? `发现新版本 v${upgrade.latestVersion}（当前 v${upgrade.currentVersion}）— 点击查看`
+                  : upgrade.loading ? '正在检查升级…' : `当前 v${appVersion || '—'} · 点击检查升级`"
+                :aria-label="upgrade.hasUpgrade ? `发现新版本 v${upgrade.latestVersion}` : '检查升级'"
+                @click="openUpgrade"
               >
-                <span class="status-dot" aria-hidden="true" />
-                <span class="max-[560px]:sr-only">{{ statusLabel }}</span>
-              </span>
+                <span class="vp-dot" aria-hidden="true" />
+                <span class="vp-text">
+                  <template v-if="upgrade.hasUpgrade">
+                    v{{ upgrade.currentVersion }}<span class="vp-sep">→</span>v{{ upgrade.latestVersion }}
+                  </template>
+                  <template v-else>
+                    v{{ appVersion || 'dev' }}
+                  </template>
+                </span>
+                <svg
+                  v-if="upgrade.hasUpgrade"
+                  class="vp-arrow"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+                >
+                  <path d="M12 19V5M5 12l7-7 7 7" />
+                </svg>
+                <svg
+                  v-if="upgrade.loading"
+                  class="vp-spin-icon"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+                >
+                  <path d="M21 12a9 9 0 1 1-3-6.7" />
+                </svg>
+                <span v-if="upgrade.hasUpgrade" class="vp-badge" aria-hidden="true">新</span>
+              </button>
             </div>
           </div>
         </div>
@@ -230,24 +250,6 @@ onBeforeUnmount(() => {
 
         <!-- Actions -->
         <div class="actions flex items-center justify-end max-[1100px]:col-start-2 max-[1100px]:row-start-1">
-          <!-- 升级提示按钮 -->
-          <button
-            class="upgrade-toggle"
-            :class="{ 'has-upgrade': upgrade.hasUpgrade }"
-            type="button"
-            :title="upgrade.hasUpgrade ? `发现新版本 v${upgrade.latestVersion}（当前 v${upgrade.currentVersion}）` : '检查升级'"
-            :aria-label="upgrade.hasUpgrade ? `发现新版本 v${upgrade.latestVersion}` : '检查升级'"
-            @click="openUpgrade"
-          >
-            <!-- 下载/升级图标 -->
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            <span v-if="upgrade.hasUpgrade" class="upgrade-dot" aria-hidden="true"></span>
-          </button>
-
           <!-- 主题切换按钮 -->
           <button
             class="theme-toggle"
@@ -443,32 +445,146 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-.status-pill {
-  background: var(--success-container);
-  border: 1px solid rgba(61, 214, 140, 0.22);
+/* 版本胶囊：发光状态点 + 版本号 + 升级入口 */
+.version-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-base);
+  background: linear-gradient(180deg, var(--bg-sunken), #fbfcfd);
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.status-dot {
+.version-pill:hover {
+  border-color: var(--primary);
+  background: var(--primary-container);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(22, 93, 255, 0.18);
+}
+
+.version-pill .vp-text {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.version-pill .vp-sep {
+  opacity: 0.5;
+  margin: 0 1px;
+  font-weight: 400;
+}
+
+/* 发光状态点：常态绿 / 检查中灰闪 / 有新版本橙脉冲 */
+.version-pill .vp-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--success);
-  box-shadow: 0 0 0 3px rgba(61, 214, 140, 0.18);
+  box-shadow: 0 0 6px rgba(61, 214, 140, 0.6);
+  flex-shrink: 0;
+  transition: all 200ms ease;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  .status-dot {
-    animation: pulse-dot 2.4s ease-in-out infinite;
-  }
+.version-pill.is-checking .vp-dot {
+  background: var(--text-tertiary);
+  box-shadow: none;
+  animation: vp-blink 1s linear infinite;
 }
 
-@keyframes pulse-dot {
-  0%,
-  100% {
-    box-shadow: 0 0 0 3px rgba(61, 214, 140, 0.16);
-  }
-  50% {
-    box-shadow: 0 0 0 5px rgba(61, 214, 140, 0.08);
+@keyframes vp-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* 检查中：旋转图标 */
+.version-pill.is-checking {
+  cursor: progress;
+  opacity: 0.85;
+}
+
+.vp-spin-icon {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  animation: vp-spin 0.8s linear infinite;
+}
+
+@keyframes vp-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 有新版本：橙色脉冲态 */
+.version-pill.has-upgrade {
+  border-color: rgba(255, 125, 0, 0.4);
+  background: linear-gradient(180deg, rgba(255, 125, 0, 0.06), rgba(255, 125, 0, 0.02));
+}
+
+.version-pill.has-upgrade:hover {
+  border-color: var(--warning);
+  background: rgba(255, 125, 0, 0.12);
+  box-shadow: 0 4px 14px rgba(255, 125, 0, 0.25);
+}
+
+.version-pill.has-upgrade .vp-dot {
+  background: var(--warning);
+  box-shadow: 0 0 8px rgba(255, 125, 0, 0.7);
+  animation: vp-glow-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes vp-glow-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 6px rgba(255, 125, 0, 0.6); }
+  50% { transform: scale(1.25); box-shadow: 0 0 12px rgba(255, 125, 0, 0.9); }
+}
+
+.version-pill.has-upgrade .vp-text {
+  color: var(--warning);
+}
+
+.version-pill.has-upgrade .vp-arrow {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  color: var(--warning);
+}
+
+.version-pill .vp-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  margin-left: 2px;
+  border-radius: 7px;
+  background: var(--warning);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: inherit;
+  line-height: 1;
+}
+
+.version-pill.has-upgrade:hover .vp-badge {
+  background: #fff;
+  color: var(--warning);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .version-pill,
+  .vp-spin-icon,
+  .version-pill .vp-dot,
+  .version-pill.has-upgrade .vp-dot {
+    transition: none !important;
+    animation: none !important;
   }
 }
 
@@ -510,67 +626,10 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tab-indicator.is-ready,
-  .status-dot {
+  .tab-indicator.is-ready {
     transition: none !important;
     animation: none !important;
   }
-}
-
-/* 升级提示按钮 —— 与 theme-toggle 同样容器风格 */
-.upgrade-toggle {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  margin-left: 8px;
-  border-radius: 10px;
-  border: 1px solid var(--border-base);
-  background: var(--bg-elevated);
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-family: inherit;
-  box-shadow: var(--shadow-sm);
-  transition: all 180ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.upgrade-toggle:hover {
-  background: var(--primary-container);
-  color: var(--primary);
-  border-color: var(--primary);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
-}
-
-.upgrade-toggle.has-upgrade {
-  color: var(--primary);
-  border-color: var(--primary);
-  background: var(--primary-container);
-}
-
-.upgrade-toggle svg {
-  width: 18px;
-  height: 18px;
-}
-
-.upgrade-toggle .upgrade-dot {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #f53f3f;
-  border: 2px solid var(--bg-elevated);
-  box-shadow: 0 0 0 0 rgba(245, 63, 63, 0.6);
-  animation: upgrade-pulse 1.8s ease-in-out infinite;
-}
-
-@keyframes upgrade-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 63, 63, 0.6); }
-  50% { box-shadow: 0 0 0 5px rgba(245, 63, 63, 0); }
 }
 
 /* 升级弹层 */
