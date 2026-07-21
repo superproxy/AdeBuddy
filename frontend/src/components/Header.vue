@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, watch, nextTick, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useThemeStore } from '../stores/theme'
 import { useUpgradeStore } from '../stores/upgrade'
+import { useNavOrderStore } from '../stores/navOrder'
 
 interface TabItem {
   key: string
   label: string
 }
 
-const props = defineProps<{ tab: string; tabs: TabItem[] }>()
+const props = defineProps<{ tab: string; tabs: TabItem[]; defaultFavoriteKeys: string[] }>()
 const emit = defineEmits<{
   (e: 'update:tab', v: string): void
 }>()
@@ -20,81 +21,178 @@ const buildTime = ref('')
 const upgrade = useUpgradeStore()
 const upgradeOpen = ref(false)
 
-const tabTrackRef = ref<HTMLElement | null>(null)
-const tabBtnRefs = ref<Record<string, HTMLElement | null>>({})
-const indicatorStyle = ref({ width: '0px', transform: 'translateX(0px)' })
-const indicatorReady = ref(false)
+const nav = useNavOrderStore()
 
-function setTabBtnRef(key: string, el: unknown) {
-  tabBtnRefs.value[key] = (el as HTMLElement | null) ?? null
-}
+// ============ 拖拽状态 ============
+// dragZone: 'fav' | 'more' — 当前正在拖拽的源区域
+const dragZone = ref<'fav' | 'more' | null>(null)
+const dragKey = ref<string | null>(null)
+const dropZone = ref<'fav' | 'more' | null>(null)
+const dropIndex = ref<number>(-1)
+const moreOpen = ref(false)
 
 function selectTab(key: string) {
   if (key === props.tab) return
   emit('update:tab', key)
+  // 选了"更多"里的项后关闭下拉
+  moreOpen.value = false
 }
 
-function moveIndicator(animate = true) {
-  const track = tabTrackRef.value
-  const btn = tabBtnRefs.value[props.tab]
-  if (!track || !btn) return
-
-  const left = btn.offsetLeft
-  const width = btn.offsetWidth
-  if (!animate) indicatorReady.value = false
-  indicatorStyle.value = {
-    width: `${width}px`,
-    transform: `translateX(${left}px)`,
+// ============ 拖拽处理（HTML5 drag-and-drop） ============
+// 拖拽 key 命名约定：dataTransfer.setData('text/tab-key', key)
+function onDragStartFav(e: DragEvent, key: string) {
+  dragZone.value = 'fav'
+  dragKey.value = key
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/tab-key', key)
   }
-  if (!animate) {
-    requestAnimationFrame(() => {
-      indicatorReady.value = true
-    })
+}
+function onDragStartMore(e: DragEvent, key: string) {
+  dragZone.value = 'more'
+  dragKey.value = key
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/tab-key', key)
+  }
+}
+function onDragEnd() {
+  dragZone.value = null
+  dragKey.value = null
+  dropZone.value = null
+  dropIndex.value = -1
+}
+
+// 常用区按钮拖拽 over：定位插入位置
+function onDragOverFavItem(e: DragEvent, key: string, idx: number) {
+  if (!dragKey.value) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  const target = e.currentTarget as HTMLElement
+  const r = target.getBoundingClientRect()
+  const after = e.clientX > r.left + r.width / 2
+  dropZone.value = 'fav'
+  // 若在同一区且拖到自己，不显示插入线
+  if (dragZone.value === 'fav' && dragKey.value === key) {
+    dropIndex.value = -1
   } else {
-    indicatorReady.value = true
+    dropIndex.value = after ? idx + 1 : idx
   }
-
-  btn.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: animate ? 'smooth' : 'auto' })
+}
+// 常用区容器 over（空白处）：插到末尾
+function onDragOverFavContainer(e: DragEvent) {
+  if (!dragKey.value) return
+  if (dragZone.value === 'fav' && dropZone.value === 'fav') return // 已在 item 上定位
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  dropZone.value = 'fav'
+  dropIndex.value = nav.favoriteKeys.length
+}
+// 常用区 drop：执行移动
+function onDropFav(e: DragEvent) {
+  e.preventDefault()
+  const key = dragKey.value
+  const fromZone = dragZone.value
+  if (!key) return
+  const toIdx = dropIndex.value < 0 ? nav.favoriteKeys.length : dropIndex.value
+  if (fromZone === 'fav') {
+    const fromIdx = nav.favoriteKeys.indexOf(key)
+    // 同区移动：修正目标索引（移除源后索引会前移）
+    const adjusted = fromIdx < toIdx ? toIdx - 1 : toIdx
+    nav.moveFavorite(fromIdx, adjusted)
+  } else if (fromZone === 'more') {
+    nav.moveToFavorites(key, toIdx)
+  }
+  onDragEnd()
 }
 
+// 更多区按钮拖拽 over
+function onDragOverMoreItem(e: DragEvent, key: string, idx: number) {
+  if (!dragKey.value) return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  const target = e.currentTarget as HTMLElement
+  const r = target.getBoundingClientRect()
+  const after = e.clientX > r.left + r.width / 2
+  dropZone.value = 'more'
+  if (dragZone.value === 'more' && dragKey.value === key) {
+    dropIndex.value = -1
+  } else {
+    dropIndex.value = after ? idx + 1 : idx
+  }
+}
+function onDragOverMoreContainer(e: DragEvent) {
+  if (!dragKey.value) return
+  if (dragZone.value === 'more' && dropZone.value === 'more') return
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  dropZone.value = 'more'
+  dropIndex.value = nav.moreKeys.length
+}
+function onDropMore(e: DragEvent) {
+  e.preventDefault()
+  const key = dragKey.value
+  const fromZone = dragZone.value
+  if (!key) return
+  const toIdx = dropIndex.value < 0 ? nav.moreKeys.length : dropIndex.value
+  if (fromZone === 'more') {
+    const fromIdx = nav.moreKeys.indexOf(key)
+    const adjusted = fromIdx < toIdx ? toIdx - 1 : toIdx
+    nav.moveMore(fromIdx, adjusted)
+  } else if (fromZone === 'fav') {
+    nav.moveToMore(key, toIdx)
+  }
+  onDragEnd()
+}
+
+// 插入线显示判定（用于 :class 绑定）
+function showDropBefore(zone: 'fav' | 'more', idx: number): boolean {
+  return dropZone.value === zone && dropIndex.value === idx
+}
+function showDropAfter(zone: 'fav' | 'more', idx: number): boolean {
+  return (
+    dropZone.value === zone &&
+    dropIndex.value === idx + 1 &&
+    idx === (zone === 'fav' ? nav.favoriteKeys.length - 1 : nav.moreKeys.length - 1)
+  )
+}
+
+// 更多下拉切换
+function toggleMore() {
+  moreOpen.value = !moreOpen.value
+}
+function closeMore() {
+  moreOpen.value = false
+}
+
+// 重置导航顺序
+function resetNav() {
+  nav.reset(props.defaultFavoriteKeys)
+  closeMore()
+}
+
+// 把指定 key 加入/移出常用区（更多菜单项右键快捷操作，也可做成按钮）
+function toggleFavorite(key: string) {
+  const isInFav = nav.favoriteKeys.includes(key)
+  if (isInFav) nav.moveToMore(key)
+  else nav.moveToFavorites(key)
+}
+
+// 键盘导航：←/→ 在常用区循环
+const favKeys = computed(() => nav.favoriteKeys)
 function onTabKeydown(e: KeyboardEvent) {
-  const keys = props.tabs.map((t) => t.key)
+  const keys = favKeys.value
   const i = keys.indexOf(props.tab)
   if (i < 0) return
-
   let next = -1
   if (e.key === 'ArrowRight') next = (i + 1) % keys.length
   else if (e.key === 'ArrowLeft') next = (i - 1 + keys.length) % keys.length
   else if (e.key === 'Home') next = 0
   else if (e.key === 'End') next = keys.length - 1
   if (next < 0) return
-
   e.preventDefault()
-  const key = keys[next]
-  selectTab(key)
-  nextTick(() => tabBtnRefs.value[key]?.focus())
+  selectTab(keys[next])
 }
-
-function onResize() {
-  moveIndicator(false)
-}
-
-watch(
-  () => props.tab,
-  async () => {
-    await nextTick()
-    moveIndicator(true)
-  },
-)
-
-watch(
-  () => props.tabs,
-  async () => {
-    await nextTick()
-    moveIndicator(false)
-  },
-  { deep: true },
-)
 
 onMounted(async () => {
   try {
@@ -105,12 +203,21 @@ onMounted(async () => {
   } catch {
     /* ignore */
   }
+  // 初始化导航排序（方案 D：常用区 + 更多）
+  nav.init(props.tabs, props.defaultFavoriteKeys)
   // 后台异步检查升级（不阻塞 UI）
   upgrade.check().catch(() => { /* 静默失败 */ })
-  await nextTick()
-  moveIndicator(false)
-  window.addEventListener('resize', onResize)
+  // 点击更多面板外部时关闭
+  window.addEventListener('click', onGlobalClick)
 })
+
+function onGlobalClick(e: MouseEvent) {
+  if (!moreOpen.value) return
+  const target = e.target as HTMLElement
+  if (!target.closest('.more-wrap')) {
+    moreOpen.value = false
+  }
+}
 
 async function openUpgrade() {
   upgradeOpen.value = true
@@ -141,7 +248,7 @@ async function downloadAsset(url: string) {
 }
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', onResize)
+  window.removeEventListener('click', onGlobalClick)
 })
 </script>
 
@@ -210,41 +317,130 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <!-- Tabs -->
+        <!-- Tabs（方案 D：常用区 + 更多收起） -->
         <nav
           class="tab-rail flex justify-center min-w-0 max-[1100px]:col-span-2 max-[1100px]:justify-start"
           aria-label="配置分区"
         >
           <div
-            ref="tabTrackRef"
             class="tab-track relative flex items-center gap-0.5 p-1 max-w-full overflow-x-auto"
             role="tablist"
             aria-orientation="horizontal"
             @keydown="onTabKeydown"
+            @dragover="onDragOverFavContainer"
+            @drop="onDropFav"
           >
-            <div
-              class="tab-indicator"
-              :class="{ 'is-ready': indicatorReady }"
-              :style="indicatorStyle"
-              aria-hidden="true"
-            />
             <button
-              v-for="t in tabs"
+              v-for="(t, idx) in nav.favoriteItems"
               :key="t.key"
-              :ref="(el) => setTabBtnRef(t.key, el)"
               type="button"
               role="tab"
+              draggable="true"
               class="tab relative z-[1] appearance-none border-0 bg-transparent cursor-pointer
                      text-[13px] font-medium tracking-tight whitespace-nowrap
-                     px-3 py-2 rounded-[10px] transition-colors duration-150"
-              :class="tab === t.key ? 'text-white font-semibold' : 'hover:text-[var(--text-primary)]'"
+                     px-3 py-2 rounded-[10px] transition-colors duration-150
+                     fav-item"
+              :class="{
+                'is-active text-white font-semibold': tab === t.key,
+                'hover:text-[var(--text-primary)]': tab !== t.key,
+                'is-dragging': dragKey === t.key,
+                'drop-before': showDropBefore('fav', idx),
+                'drop-after': showDropAfter('fav', idx),
+              }"
               :style="tab !== t.key ? { color: 'var(--text-secondary)' } : {}"
               :aria-selected="tab === t.key"
               :tabindex="tab === t.key ? 0 : -1"
+              :title="`拖拽调整顺序 · ${t.label}`"
               @click="selectTab(t.key)"
+              @dragstart="onDragStartFav($event, t.key)"
+              @dragend="onDragEnd"
+              @dragover="onDragOverFavItem($event, t.key, idx)"
             >
-              {{ t.label }}
+              <span class="drag-handle" aria-hidden="true">⠿</span>
+              <span class="tab-label">{{ t.label }}</span>
+              <button
+                v-if="nav.favoriteKeys.length > 1"
+                type="button"
+                class="fav-remove"
+                title="移出常用区"
+                aria-label="移出常用区"
+                @click.prevent.stop="nav.moveToMore(t.key)"
+              >×</button>
             </button>
+
+            <!-- 更多收起区 -->
+            <div v-if="nav.moreItems.length > 0" class="more-wrap relative">
+              <button
+                type="button"
+                class="tab more-trigger appearance-none border-0 bg-transparent cursor-pointer
+                       text-[13px] font-medium tracking-tight whitespace-nowrap
+                       px-3 py-2 rounded-[10px] transition-colors duration-150
+                       flex items-center gap-1"
+                :class="{
+                  'is-active text-white font-semibold': nav.moreKeys.includes(tab),
+                  'hover:text-[var(--text-primary)]': !nav.moreKeys.includes(tab),
+                  'more-open': moreOpen,
+                }"
+                :style="!nav.moreKeys.includes(tab) ? { color: 'var(--text-secondary)' } : {}"
+                :aria-expanded="moreOpen"
+                title="更多菜单"
+                @click="toggleMore"
+              >
+                更多 {{ nav.moreKeys.length }}
+                <svg
+                  class="more-chev"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+                >
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </button>
+
+              <!-- 更多下拉面板 -->
+              <div
+                v-if="moreOpen"
+                class="more-panel"
+                role="menu"
+                @dragover="onDragOverMoreContainer"
+                @drop="onDropMore"
+              >
+                <div class="more-panel-head">
+                  <span>更多菜单（可拖入常用区）</span>
+                  <button type="button" class="more-reset" title="重置为默认顺序" @click="resetNav">
+                    重置
+                  </button>
+                </div>
+                <button
+                  v-for="(t, idx) in nav.moreItems"
+                  :key="t.key"
+                  type="button"
+                  role="menuitem"
+                  draggable="true"
+                  class="more-item"
+                  :class="{
+                    'is-active': tab === t.key,
+                    'is-dragging': dragKey === t.key,
+                    'drop-before': showDropBefore('more', idx),
+                    'drop-after': showDropAfter('more', idx),
+                  }"
+                  :title="`拖拽调整顺序 · ${t.label}`"
+                  @click="selectTab(t.key)"
+                  @dragstart="onDragStartMore($event, t.key)"
+                  @dragend="onDragEnd"
+                  @dragover="onDragOverMoreItem($event, t.key, idx)"
+                >
+                  <span class="drag-handle" aria-hidden="true">⠿</span>
+                  <span class="tab-label">{{ t.label }}</span>
+                  <button
+                    type="button"
+                    class="more-add"
+                    title="加入常用区"
+                    aria-label="加入常用区"
+                    @click.prevent.stop="nav.moveToFavorites(t.key)"
+                  >+</button>
+                </button>
+              </div>
+            </div>
           </div>
         </nav>
 
@@ -599,25 +795,14 @@ onBeforeUnmount(() => {
   display: none;
 }
 
-.tab-indicator {
-  position: absolute;
-  top: 4px;
-  left: 0;
-  height: calc(100% - 8px);
-  border-radius: 10px;
+/* ============ 方案 D：常用区 + 更多收起 ============ */
+
+/* 活跃 tab 背景（替代原 indicator） */
+.tab.is-active {
   background: linear-gradient(180deg, var(--primary), var(--primary-hover));
   box-shadow:
-    0 2px 10px rgba(22, 93, 255, 0.45),
+    0 2px 10px rgba(22, 93, 255, 0.35),
     0 0 0 1px rgba(255, 255, 255, 0.12) inset;
-  pointer-events: none;
-  z-index: 0;
-  will-change: transform, width;
-}
-
-.tab-indicator.is-ready {
-  transition:
-    transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
-    width 200ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .tab:focus-visible {
@@ -625,8 +810,204 @@ onBeforeUnmount(() => {
   outline-offset: 2px;
 }
 
+/* 拖拽手柄：默认半透明，hover 时显示 */
+.fav-item,
+.more-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.drag-handle {
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-tertiary);
+  opacity: 0;
+  cursor: grab;
+  transition: opacity 150ms ease;
+  user-select: none;
+}
+.fav-item:hover .drag-handle,
+.more-item:hover .drag-handle {
+  opacity: 0.55;
+}
+.fav-item:active .drag-handle,
+.more-item:active .drag-handle {
+  cursor: grabbing;
+}
+/* 活跃态手柄颜色 */
+.fav-item.is-active .drag-handle {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* 拖拽中：源项半透明 */
+.fav-item.is-dragging,
+.more-item.is-dragging {
+  opacity: 0.35;
+}
+
+/* 插入指示线 */
+.fav-item.drop-before,
+.more-item.drop-before {
+  box-shadow: -2px 0 0 0 var(--primary);
+}
+.fav-item.drop-after,
+.more-item.drop-after {
+  box-shadow: 2px 0 0 0 var(--primary);
+}
+
+/* 常用区移除按钮（×） */
+.fav-remove {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all 150ms ease;
+  margin-left: 2px;
+}
+.fav-item:hover .fav-remove {
+  opacity: 0.6;
+}
+.fav-remove:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  opacity: 1;
+}
+.fav-item:not(.is-active) .fav-remove:hover {
+  background: var(--bg-sunken);
+  color: var(--text-primary);
+}
+
+/* 更多按钮 */
+.more-wrap {
+  margin-left: 4px;
+}
+.more-trigger .more-chev {
+  width: 11px;
+  height: 11px;
+  transition: transform 200ms ease;
+  opacity: 0.7;
+}
+.more-trigger.more-open .more-chev {
+  transform: rotate(180deg);
+}
+.more-trigger.is-active {
+  background: linear-gradient(180deg, var(--primary), var(--primary-hover));
+  box-shadow: 0 2px 10px rgba(22, 93, 255, 0.35);
+}
+
+/* 更多下拉面板 */
+.more-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 220px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-base);
+  border-radius: 12px;
+  box-shadow:
+    0 6px 24px rgba(0, 0, 0, 0.12),
+    0 2px 8px rgba(0, 0, 0, 0.06);
+  padding: 6px;
+  z-index: 50;
+  animation: more-panel-in 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes more-panel-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-4px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.more-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-base);
+  margin-bottom: 4px;
+}
+.more-reset {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.more-reset:hover {
+  background: var(--primary-container);
+}
+.more-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease, color 120ms ease;
+}
+.more-item:hover {
+  background: var(--bg-sunken);
+  color: var(--text-primary);
+}
+.more-item.is-active {
+  color: var(--primary);
+  background: var(--primary-container);
+}
+.more-item .tab-label {
+  flex: 1;
+}
+.more-add {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  font-size: 16px;
+  line-height: 1;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all 150ms ease;
+}
+.more-item:hover .more-add {
+  opacity: 0.7;
+}
+.more-add:hover {
+  background: var(--primary);
+  color: #fff;
+  opacity: 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .tab-indicator.is-ready {
+  .tab,
+  .more-panel,
+  .drag-handle,
+  .more-chev {
     transition: none !important;
     animation: none !important;
   }

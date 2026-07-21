@@ -25,6 +25,7 @@ import { useMcpStore } from './stores/mcp'
 import { useKeysStore } from './stores/keys'
 
 const tab = ref('ide')
+// 全部菜单定义（顺序仅作为"更多"区默认顺序）
 const tabs = [
   { key: 'ide', label: 'AIDE 管理' },
   { key: 'plugin', label: '插件配置' },
@@ -40,6 +41,8 @@ const tabs = [
   { key: 'rules', label: 'Rules' },
   { key: 'hooks', label: 'Hooks' },
 ]
+// 方案 D 默认常用区顺序（用户指定）：AIDE → 密钥 → LLM → MCP → Skills → 插件
+const defaultFavoriteKeys = ['ide', 'keys', 'env', 'mcp', 'skill', 'plugin']
 
 const ide = useIdeStore()
 const env = useEnvStore()
@@ -58,7 +61,7 @@ onBeforeUnmount(() => {})
 
 <template>
   <div class="app-root min-h-screen">
-    <Header :tab="tab" :tabs="tabs" @update:tab="tab = $event" />
+    <Header :tab="tab" :tabs="tabs" :default-favorite-keys="defaultFavoriteKeys" @update:tab="tab = $event" />
 
     <!-- 方案 D：同步工具栏内联在 Header 下方 -->
     <SyncBar :tab="tab" />
