@@ -462,27 +462,63 @@ def _build_macos_zip(version: str, app_name: str) -> None:
         fail(f"未找到预期的 zip 输出: {zip_name}")
 
 
+def _step_timer(step_name: str):
+    """步骤计时上下文管理器，结束时打印耗时。"""
+    from contextlib import contextmanager
+    import time
+
+    @contextmanager
+    def _timer():
+        t0 = time.perf_counter()
+        info(f"── {step_name} 开始 ──")
+        try:
+            yield
+        finally:
+            elapsed = time.perf_counter() - t0
+            if elapsed >= 60:
+                info(f"── {step_name} 完成: {elapsed/60:.1f}m ──")
+            else:
+                info(f"── {step_name} 完成: {elapsed:.1f}s ──")
+    return _timer()
+
+
 def main():
+    import time
+    total_t0 = time.perf_counter()
+
     ap = argparse.ArgumentParser(description="AdeBuddy 跨平台打包")
     ap.add_argument("--windowed", action="store_true", help="无控制台（macOS 生成 .app / Windows 无黑框）")
     ap.add_argument("--clean", action="store_true", help="构建前清理 dist/ build/")
     ap.add_argument("--no-verify", action="store_true", help="跳过密钥泄漏扫描（不推荐）")
-    ap.add_argument("--no-installer", action="store_true", help="跳过 Inno Setup 安装包生成（仅 Windows）")
+    ap.add_argument("--no-installer", action="store_true",
+                    help="跳过安装包生成（macOS: .dmg/.pkg；Windows: Inno Setup .exe）。开发迭代强烈推荐")
     ap.add_argument("--version", default="1.0.0", help="安装包版本号（默认 1.0.0）")
     args = ap.parse_args()
 
     info(f"平台: {sys.platform} | Python: {sys.version.split()[0]} | 版本: {args.version}")
+    if args.no_installer:
+        info("已启用 --no-installer：跳过 .dmg/.pkg 生成（开发迭代模式）")
+
     ensure_pyinstaller()
-    write_version(args.version)
-    generate_icns()
+    with _step_timer("写版本号"):
+        write_version(args.version)
+    with _step_timer("生成 icns"):
+        generate_icns()
     if args.clean:
-        clean()
-    run_pyinstaller(windowed=args.windowed)
+        with _step_timer("清理 dist/build"):
+            clean()
+    with _step_timer("PyInstaller 打包"):
+        run_pyinstaller(windowed=args.windowed)
     if not args.no_verify:
-        verify_bundle()
-        check_examples_present()
+        with _step_timer("密钥泄漏扫描"):
+            verify_bundle()
+            check_examples_present()
     if not args.no_installer and sys.platform in ("win32", "darwin"):
-        build_installer(version=args.version)
+        with _step_timer("生成安装包 .dmg/.pkg"):
+            build_installer(version=args.version)
+
+    total = time.perf_counter() - total_t0
+    info(f"═══ 总耗时: {total/60:.1f}m ═══" if total >= 60 else f"═══ 总耗时: {total:.1f}s ═══")
     report()
 
 

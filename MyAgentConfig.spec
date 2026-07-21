@@ -35,7 +35,13 @@ hiddenimports += collect_submodules('webview')
 hiddenimports += collect_submodules('flask')
 
 # 数据文件：(源, 目标目录) —— 相对 spec 文件所在的项目根
-datas = [
+datas = []
+# macOS 下 PyInstaller hook-certifi 偶发不打包 cacert.pem，
+# 导致 frozen 应用 HTTPS 请求报 CERTIFICATE_VERIFY_FAILED。
+# 显式收集 certifi 数据文件作为兜底。
+datas += collect_data_files('certifi')
+
+datas += [
     ('tools/config_ui.html', 'tools'),
     ('scripts/init-env.py', 'scripts'),
     ('scripts/init-ide.py', 'scripts'),

@@ -141,13 +141,19 @@ function ideType(it: any): 'cli' | 'app' | '' {
   return ideRawType(it) === 'app' ? 'app' : (ideRawType(it) === 'cli' ? 'cli' : '')
 }
 
-/** 把 both 类型的 IDE 拆成两个独立条目（CLI / App） */
+/** 把 both 类型的 IDE 拆成两个独立条目（CLI / App）
+ *
+ * 拆分时清空非本 tab 的 path 字段：cli 卡片只保留 exe_path，app 卡片只保留 app_path。
+ * 否则两个卡片都继承原 it 的字段，会导致：
+ *   - 仅 CLI 装了时，App 卡片被错分到"已安装 · 桌面 App"，但 dock 又显示"安装"按钮
+ *   - currentInstalled(app 卡片) 错误命中 it.exe_path 而误判为已安装
+ */
 function expandIde(it: any): any[] {
   const raw = ideRawType(it)
   if (raw !== 'both') return [it]
   return [
-    { ...it, _tab: 'cli', _uid: it.key + ':cli', label: it.label + ' CLI', _expanded: true },
-    { ...it, _tab: 'app', _uid: it.key + ':app', label: it.label + ' App', _expanded: true },
+    { ...it, _tab: 'cli', _uid: it.key + ':cli', label: it.label + ' CLI', _expanded: true, app_path: '' },
+    { ...it, _tab: 'app', _uid: it.key + ':app', label: it.label + ' App', _expanded: true, exe_path: '' },
   ]
 }
 
@@ -167,12 +173,19 @@ function sessionCount(it: any): number {
   return ideSessionsStatsMap.value[it.key]?.total || 0
 }
 
-// 展开后的已安装/未安装列表（both 拆成两个独立条目）
+// 展开后的全部条目（both 拆成两个独立条目，按 sync.ideList 顺序排序）
+// 注意：必须取 installedIdes + notInstalledIdes 的并集（=ideDetects 全量），
+// 否则 both 类型 IDE 在仅 CLI 装时整体算 installed，App 卡片不会进入未装分组。
+const expandedAll = computed(() =>
+  [...installedIdes.value, ...notInstalledIdes.value].flatMap(it => expandIde(it))
+)
+// 已安装/未安装按"每个 tab 的实际安装状态"判定（exe_path / app_path），
+// 而不是用整体的 i.installed（CLI/App 任一装了就 true，会把 App 未装的卡片错分到已装）
 const expandedInstalled = computed(() =>
-  installedIdes.value.flatMap(it => expandIde(it))
+  expandedAll.value.filter(it => currentInstalled(it))
 )
 const expandedNotInstalled = computed(() =>
-  notInstalledIdes.value.flatMap(it => expandIde(it))
+  expandedAll.value.filter(it => !currentInstalled(it))
 )
 
 // 按类型分组（展开后只有 cli / app 两组）
@@ -197,8 +210,7 @@ const notInstalledOther = computed(() =>
 const currentSelectedIde = computed(() => {
   if (!expandedIde.value) return null
   // 优先在展开后的列表里按 _uid 查找（both 拆分条目）
-  const all = [...expandedInstalled.value, ...expandedNotInstalled.value]
-  return all.find(i => ideUid(i) === expandedIde.value) || null
+  return expandedAll.value.find(i => ideUid(i) === expandedIde.value) || null
 })
 
 // 进入 AIDE 管理页时自动检测（首次无数据才检测，避免重复请求）

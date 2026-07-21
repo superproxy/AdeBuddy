@@ -10,12 +10,64 @@
     python app.py --port 5050     # 指定端口
 """
 import argparse
+import os
 import runpy
 import sys
 import threading
 import time
 import webbrowser
 from pathlib import Path
+
+
+def _setup_ssl_certs() -> None:
+    """PyInstaller frozen 模式下，Python 默认 SSL verify path 指向构建机路径，
+    在用户机器上不存在，导致 HTTPS 请求报 CERTIFICATE_VERIFY_FAILED。
+
+    优先用 certifi 的 cacert.pem（PyInstaller hook 会打包到 _MEIPASS）；
+    找不到时回退到 macOS 系统钥匙串导出的根证书。
+    必须在任何 requests / urllib 调用之前执行。
+    """
+    ca_path = None
+    try:
+        import certifi
+        ca_path = certifi.where()
+    except Exception:
+        pass
+
+    # frozen 模式下 certifi.where() 可能指向不存在的源码路径，校验一下
+    if not ca_path or not os.path.isfile(ca_path):
+        if getattr(sys, "frozen", False):
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass:
+                cand = Path(meipass) / "certifi" / "cacert.pem"
+                if cand.is_file():
+                    ca_path = str(cand)
+        if (not ca_path or not os.path.isfile(ca_path)) and sys.platform == "darwin":
+            # 回退：从 macOS 系统钥匙串导出根证书（Keychain Verifier Settings）
+            cand = "/etc/ssl/cert.pem"
+            if os.path.isfile(cand):
+                ca_path = cand
+
+    if ca_path and os.path.isfile(ca_path):
+        os.environ.setdefault("SSL_CERT_FILE", ca_path)
+        os.environ.setdefault("REQUESTS_CA_BUNDLE", ca_path)
+        os.environ.setdefault("CURL_CA_BUNDLE", ca_path)
+        # 让 stdlib urllib 也走同一证书
+        try:
+            import ssl
+            ssl.get_default_verify_paths  # 触发模块加载
+            _orig_ctx = ssl.create_default_context
+            def _patched_ctx(purpose=None):
+                ctx = _orig_ctx(purpose) if purpose is not None else _orig_ctx()
+                ctx.load_verify_locations(cafile=ca_path)
+                return ctx
+            ssl.create_default_context = _patched_ctx
+        except Exception:
+            pass
+
+
+_setup_ssl_certs()
+
 
 def _resolve_project_root() -> Path:
     """Frozen-aware：dev 用 __file__ 上级，frozen 用 exe 所在目录。
