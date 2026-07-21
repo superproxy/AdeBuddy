@@ -32,7 +32,7 @@ const tabs = [
   { key: 'plugin-build', label: '插件构建' },
   { key: 'marketplace', label: '插件市场' },
   { key: 'terminal', label: '终端测试' },
-  { key: 'keys', label: '密钥 / 环境变量' },
+  { key: 'keys', label: '密钥' },
   { key: 'env', label: 'LLM 配置' },
   { key: 'mcp', label: 'MCP 配置' },
   { key: 'skill', label: 'Skills 配置' },

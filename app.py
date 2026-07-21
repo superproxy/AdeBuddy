@@ -85,6 +85,56 @@ def _resolve_project_root() -> Path:
     return Path(__file__).resolve().parent
 
 
+def _migrate_legacy_data_dir() -> None:
+    """macOS: 从旧品牌名 AdeBuddy 迁移用户数据到 AgentBuddy。
+
+    品牌改名后数据目录路径变化，旧目录（~/Library/Application Support/AdeBuddy/）
+    里的用户数据（config/、.agents/）需迁移到新目录，避免用户密钥等数据丢失。
+    仅在新目录缺少关键用户数据时迁移，迁移后不删除旧目录（留作备份）。
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    if sys.platform != "darwin":
+        return
+    home = Path.home()
+    legacy = home / "Library" / "Application Support" / "AdeBuddy"
+    current = home / "Library" / "Application Support" / "AgentBuddy"
+    if not legacy.exists():
+        return
+    # 新目录已有 config/keys/keys.yaml 且非空 → 已迁移过，跳过
+    dst_keys = current / "config" / "keys" / "keys.yaml"
+    if dst_keys.exists() and dst_keys.stat().st_size > 16:
+        return
+    import shutil
+    try:
+        # 迁移 config/（用户密钥、llm、mcp 等配置）
+        legacy_config = legacy / "config"
+        dst_config = current / "config"
+        if legacy_config.exists():
+            for item in legacy_config.iterdir():
+                dst_item = dst_config / item.name
+                if dst_item.exists():
+                    # 已存在则合并：目录递归拷贝（覆盖），文件跳过（保留新版）
+                    if item.is_dir():
+                        shutil.copytree(item, dst_item, dirs_exist_ok=True)
+                    # 文件不覆盖（新版本优先）
+                else:
+                    if item.is_dir():
+                        shutil.copytree(item, dst_item)
+                    else:
+                        dst_config.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(item, dst_item)
+            print(f"[migrate] 已从旧目录迁移 config/: {legacy_config} → {dst_config}", file=sys.stderr)
+        # 迁移 .agents/（智能体数据）
+        legacy_agents = legacy / ".agents"
+        dst_agents = current / ".agents"
+        if legacy_agents.exists() and not dst_agents.exists():
+            shutil.copytree(legacy_agents, dst_agents)
+            print(f"[migrate] 已从旧目录迁移 .agents/: {legacy_agents} → {dst_agents}", file=sys.stderr)
+    except Exception as e:
+        print(f"[migrate][WARN] 迁移旧数据失败: {e}", file=sys.stderr)
+
+
 def _redirect_stdio_to_log(project_root: Path) -> None:
     """windowed 模式下 stdout/stderr 被丢弃，重定向到 exe 目录 app.log 便于排查。
 
@@ -470,6 +520,9 @@ def main():
 
     # windowed 模式：stdout/stderr 为 None，重定向到 exe 目录 app.log
     _redirect_stdio_to_log(PROJECT_ROOT)
+
+    # macOS: 从旧品牌名 AdeBuddy 迁移用户数据（密钥等）到 AgentBuddy
+    _migrate_legacy_data_dir()
 
     # frozen 模式首次运行：从 bundle 复制资源到 exe 目录
     _bootstrap_from_bundle()

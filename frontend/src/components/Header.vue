@@ -265,10 +265,17 @@ onBeforeUnmount(() => {
           <div
             class="brand-mark relative w-[38px] h-[38px] rounded-[11px] shrink-0
                    bg-gradient-to-br from-brand-500 to-brand-700
-                   grid place-items-center font-bold text-[17px] tracking-tight"
+                   grid place-items-center"
             aria-hidden="true"
           >
-            虎
+            <svg class="brand-icon" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <!-- 飞翼：左右展开的翅膀 + 中间上升线，如虎添翼 -->
+              <path d="M16 6 L16 26" />
+              <path d="M16 10 C 12 8, 7 9, 4 12 C 7 13, 11 13, 14 12" />
+              <path d="M16 10 C 20 8, 25 9, 28 12 C 25 13, 21 13, 18 12" />
+              <path d="M16 17 C 12 15, 8 16, 5 19 C 8 20, 12 20, 15 19" />
+              <path d="M16 17 C 20 15, 24 16, 27 19 C 24 20, 20 20, 17 19" />
+            </svg>
           </div>
           <div class="min-w-0">
             <h1 class="text-[15px] font-bold tracking-tight leading-tight whitespace-nowrap" style="color: var(--text-primary)">
@@ -627,6 +634,13 @@ onBeforeUnmount(() => {
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.14) inset,
     0 4px 14px rgba(22, 93, 255, 0.38);
+  color: #fff;
+}
+
+.brand-icon {
+  width: 24px;
+  height: 24px;
+  color: #fff;
 }
 
 .brand-mark::after {
