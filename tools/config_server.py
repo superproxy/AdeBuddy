@@ -996,10 +996,14 @@ def apply_keys_to_env():
     note = ""
 
     if sys.platform == "win32":
-        # Windows: 调用 PowerShell 设置用户级环境变量
-        target = "Windows 用户环境变量（[Environment]::SetEnvironmentVariable 'User'）"
+        # Windows: 直接写注册表 HKCU\Environment，避免 PowerShell 启动开销
+        # （PowerShell [Environment]::SetEnvironmentVariable 每条都会广播
+        #  WM_SETTINGCHANGE 给所有窗口，多条变量累积会超时）
+        target = "Windows 用户环境变量（HKCU\\Environment）"
         note = "已写入注册表（HKCU\\Environment），新开终端/进程即可读取；当前进程不自动刷新。"
-        ps_script_lines = []
+
+        # 先收集要写的变量
+        to_write: list = []
         for k, v in mcp.items():
             if only_keys and k not in only_keys:
                 skipped.append({"key": k, "reason": "未在指定列表"})
@@ -1008,14 +1012,10 @@ def apply_keys_to_env():
             if not value and not include_empty:
                 skipped.append({"key": k, "reason": "值为空"})
                 continue
-            # PowerShell 单引号转义
-            v_esc = value.replace("'", "''")
-            ps_script_lines.append(
-                f"[Environment]::SetEnvironmentVariable('{k}', '{v_esc}', 'User')"
-            )
+            to_write.append((k, value))
             applied.append({"key": k, "value": value})
 
-        if not ps_script_lines:
+        if not to_write:
             return jsonify({
                 "ok": True,
                 "applied": [],
@@ -1024,35 +1024,51 @@ def apply_keys_to_env():
                 "note": "无变量需要应用",
             })
 
-        ps_script = "; ".join(ps_script_lines)
-        # 用 PowerShell 执行，-NoProfile 避免用户配置干扰
-        cmd = [
-            "powershell", "-NoProfile", "-NonInteractive",
-            "-Command", ps_script,
-        ]
         try:
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=30,
-                encoding="utf-8", errors="replace",
-            )
-            if proc.returncode != 0:
-                return jsonify({
-                    "ok": False,
-                    "error": f"PowerShell 执行失败 (code={proc.returncode}): {proc.stderr.strip() or proc.stdout.strip()}",
-                    "applied": [],
-                    "skipped": skipped,
-                    "target": target,
-                }), 500
-        except FileNotFoundError:
+            import winreg
+            import ctypes
+            # 打开 HKCU\Environment（读写）
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                "Environment",
+                0,
+                winreg.KEY_READ | winreg.KEY_WRITE,
+            ) as reg_key:
+                for k, value in to_write:
+                    # REG_SZ：纯字符串（不展开 %VAR%）
+                    # 若需支持 %VAR% 引用，可改 REG_EXPAND_SZ
+                    winreg.SetValueEx(reg_key, k, 0, winreg.REG_SZ, value)
+
+            # 广播一次 WM_SETTINGCHANGE，让其他进程感知环境变量变化
+            # HWND_BROADCAST = 0xFFFF, WM_SETTINGCHANGE = 0x001A
+            # SMTO_ABORTIFHUNG = 0x0002（接收进程挂起时立即返回，不等待）
+            try:
+                ctypes.windll.user32.SendMessageTimeoutW(
+                    0xFFFF,           # HWND_BROADCAST
+                    0x001A,           # WM_SETTINGCHANGE
+                    0,
+                    "Environment",
+                    0x0002,           # SMTO_ABORTIFHUNG
+                    1000,             # 超时 1s
+                )
+            except Exception:
+                # 广播失败不影响写入结果，新开进程仍可读到
+                pass
+
+        except PermissionError as e:
             return jsonify({
                 "ok": False,
-                "error": "未找到 powershell 命令",
+                "error": f"写入注册表权限不足: {e}",
+                "applied": [],
+                "skipped": skipped,
                 "target": target,
             }), 500
-        except subprocess.TimeoutExpired:
+        except OSError as e:
             return jsonify({
                 "ok": False,
-                "error": "PowerShell 执行超时",
+                "error": f"写入注册表失败: {e}",
+                "applied": [],
+                "skipped": skipped,
                 "target": target,
             }), 500
 
