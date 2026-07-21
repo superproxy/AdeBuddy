@@ -330,13 +330,12 @@ onBeforeUnmount(() => {
             @dragover="onDragOverFavContainer"
             @drop="onDropFav"
           >
-            <button
+            <div
               v-for="(t, idx) in nav.favoriteItems"
               :key="t.key"
-              type="button"
               role="tab"
               draggable="true"
-              class="tab relative z-[1] appearance-none border-0 bg-transparent cursor-pointer
+              class="tab relative z-[1] cursor-pointer
                      text-[13px] font-medium tracking-tight whitespace-nowrap
                      px-3 py-2 rounded-[10px] transition-colors duration-150
                      fav-item"
@@ -366,7 +365,7 @@ onBeforeUnmount(() => {
                 aria-label="移出常用区"
                 @click.prevent.stop="nav.moveToMore(t.key)"
               >×</button>
-            </button>
+            </div>
 
             <!-- 更多收起区 -->
             <div v-if="nav.moreItems.length > 0" class="more-wrap relative">
@@ -410,10 +409,9 @@ onBeforeUnmount(() => {
                     重置
                   </button>
                 </div>
-                <button
+                <div
                   v-for="(t, idx) in nav.moreItems"
                   :key="t.key"
-                  type="button"
                   role="menuitem"
                   draggable="true"
                   class="more-item"
@@ -438,7 +436,7 @@ onBeforeUnmount(() => {
                     aria-label="加入常用区"
                     @click.prevent.stop="nav.moveToFavorites(t.key)"
                   >+</button>
-                </button>
+                </div>
               </div>
             </div>
           </div>
