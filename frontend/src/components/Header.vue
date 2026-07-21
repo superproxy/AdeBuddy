@@ -131,8 +131,16 @@ function ignoreUpgrade() {
   upgradeOpen.value = false
 }
 
-function downloadAsset(url: string) {
-  // 用浏览器直接打开下载链接（pywebview 会调用系统下载）
+async function downloadAsset(url: string) {
+  // pywebview 桌面模式：window.open 会被忽略，走 JS-Python 桥接用系统浏览器打开
+  const pw = (window as any).pywebview
+  if (pw?.api?.open_external) {
+    try {
+      await pw.api.open_external(url)
+      return
+    } catch { /* 回退到 window.open */ }
+  }
+  // 浏览器模式回退
   window.open(url, '_blank')
 }
 

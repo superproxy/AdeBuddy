@@ -373,6 +373,27 @@ class _DownloadApi:
             except Exception as e:
                 return {"ok": False, "error": str(e)}
 
+    def open_external(self, url: str) -> dict:
+        """用系统默认浏览器打开外部 URL（pywebview 下 window.open 会被忽略）。
+
+        用于：升级弹窗的下载链接、官网链接等。浏览器会自动处理 GitHub release
+        的重定向下载。
+        """
+        import sys as _sys
+        import subprocess as _sp
+        if not url or not isinstance(url, str):
+            return {"ok": False, "error": "invalid url"}
+        try:
+            if _sys.platform == "darwin":
+                _sp.Popen(["open", url])
+            elif _sys.platform == "win32":
+                _sp.Popen(["cmd", "/c", "start", "", url], shell=False)
+            else:
+                _sp.Popen(["xdg-open", url])
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
 
 def _osascript_to_posix(raw: str) -> str:
     """将 osascript choose file name 的返回值转为 POSIX 路径。
