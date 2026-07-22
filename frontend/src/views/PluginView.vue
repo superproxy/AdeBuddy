@@ -22,6 +22,26 @@ const exportMenu = ref<string | null>(null)
 const dragging = ref(false)
 const dragCounter = ref(0)
 
+// ===== 视图切换：列表（默认）/ 图标 =====
+type ViewMode = 'list' | 'grid'
+const viewMode = ref<ViewMode>('list')
+
+// ===== 排序 =====
+type SortBy = 'name' | 'description' | 'skills' | 'mcp' | 'status'
+type SortDir = 'asc' | 'desc'
+const sortBy = ref<SortBy>('name')
+const sortDir = ref<SortDir>('asc')
+
+function setSort(by: SortBy) {
+  if (sortBy.value === by) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+    return
+  }
+  sortBy.value = by
+  // 默认方向：name/description 升序，skills/mcp/status 降序
+  sortDir.value = (by === 'skills' || by === 'mcp' || by === 'status') ? 'desc' : 'asc'
+}
+
 const installedCount = computed(() => plugins.value.filter((p) => p.installed).length)
 const uninstalledCount = computed(() => plugins.value.length - installedCount.value)
 const skillsTotal = computed(() => plugins.value.reduce((a, p) => a + (p.skills_count || 0), 0))
@@ -36,6 +56,56 @@ const filteredPlugins = computed(() => {
   })
 })
 
+const sortedPlugins = computed(() => {
+  const list = filteredPlugins.value.slice()
+  const by = sortBy.value
+  const dir = sortDir.value === 'asc' ? 1 : -1
+  const coll = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true })
+  list.sort((a, b) => {
+    let cmp = 0
+    if (by === 'name') {
+      cmp = coll.compare(a.name || '', b.name || '')
+    } else if (by === 'description') {
+      cmp = coll.compare(a.description || '', b.description || '')
+      if ((a.description || '') !== (b.description || '')) {
+        if (!a.description) return 1
+        if (!b.description) return -1
+      }
+    } else if (by === 'skills') {
+      cmp = (a.skills_count || 0) - (b.skills_count || 0)
+    } else if (by === 'mcp') {
+      cmp = (a.mcp_count || 0) - (b.mcp_count || 0)
+    } else if (by === 'status') {
+      // 已安装 (true) 排前
+      cmp = (a.installed === b.installed) ? 0 : (a.installed ? -1 : 1)
+    }
+    if (cmp === 0) cmp = coll.compare(a.name || '', b.name || '')
+    return cmp * dir
+  })
+  return list
+})
+
+// ===== 选中状态（仿 MCP/Skills） =====
+const allFilteredSelected = computed(() =>
+  sortedPlugins.value.length > 0 && sortedPlugins.value.every((p) => selectedForExport.value.has(p.file)),
+)
+const selectedCount = computed(() => selectedForExport.value.size)
+function toggleSelectAll() {
+  if (allFilteredSelected.value) {
+    // 取消当前筛选列表的全选
+    const s = new Set(selectedForExport.value)
+    sortedPlugins.value.forEach((p) => s.delete(p.file))
+    selectedForExport.value = s
+  } else {
+    const s = new Set(selectedForExport.value)
+    sortedPlugins.value.forEach((p) => s.add(p.file))
+    selectedForExport.value = s
+  }
+}
+function selectVisible() {
+  selectFilesForExport(sortedPlugins.value.map((p) => p.file))
+}
+
 function triggerImport() { inputRef.value?.click() }
 
 function onExportBatch() {
@@ -46,8 +116,29 @@ function onExportBatch() {
   exportSelectedPlugins()
 }
 
-function selectVisible() {
-  selectFilesForExport(filteredPlugins.value.map((p) => p.file))
+async function batchInstall() {
+  const targets = sortedPlugins.value.filter((p) => !p.installed && selectedForExport.value.has(p.file))
+  if (!targets.length) {
+    ui.toast('所选插件均已安装', 'warn')
+    return
+  }
+  for (const p of targets) {
+    await onTogglePlugin(p, true)
+  }
+  clearExportSelection()
+}
+
+async function batchUninstall() {
+  const targets = sortedPlugins.value.filter((p) => p.installed && selectedForExport.value.has(p.file))
+  if (!targets.length) {
+    ui.toast('所选插件均未安装', 'warn')
+    return
+  }
+  if (!confirm(`确认卸载 ${targets.length} 个插件？`)) return
+  for (const p of targets) {
+    await onTogglePlugin(p, false)
+  }
+  clearExportSelection()
 }
 
 function goBuild() {
@@ -130,7 +221,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
           class="btn btn-secondary"
           :disabled="!plugins.length"
           @click="onExportBatch"
-        >导出</button>
+        >导出<span v-if="selectedCount" class="btn-badge">{{ selectedCount }}</span></button>
         <button type="button" class="btn btn-primary" @click="goBuild">构建插件</button>
         <input ref="inputRef" type="file" accept=".yaml,.yml,.zip" class="hidden" @change="onImportPluginFile">
       </div>
@@ -156,6 +247,14 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
           </div>
         </div>
         <div class="btn-cluster">
+          <div class="seg view-toggle" role="group" aria-label="视图切换">
+            <button type="button" :class="{ on: viewMode === 'list' }" @click="viewMode = 'list'" title="列表视图">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18M3 12h18M3 19h18"/></svg>
+            </button>
+            <button type="button" :class="{ on: viewMode === 'grid' }" @click="viewMode = 'grid'" title="图标视图">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+            </button>
+          </div>
           <div class="btn-pair" role="group" aria-label="批量选择">
             <button type="button" class="btn btn-ghost btn-sm" @click="selectVisible">全选可见</button>
             <button type="button" class="btn btn-ghost btn-sm" @click="clearExportSelection">清空</button>
@@ -163,25 +262,71 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
         </div>
       </div>
 
-      <div class="table-wrap">
+      <Transition name="fade-slide">
+        <div v-if="selectedCount" class="batch-bar" role="toolbar" aria-label="批量操作">
+          <span class="batch-count">已选 {{ selectedCount }} 个</span>
+          <button type="button" class="btn btn-soft btn-sm" @click="batchInstall">安装</button>
+          <button type="button" class="btn btn-danger-text btn-sm" @click="batchUninstall">卸载</button>
+          <button type="button" class="btn btn-soft btn-sm" @click="onExportBatch">导出</button>
+          <span class="batch-split" />
+          <button type="button" class="btn btn-ghost btn-sm" @click="clearExportSelection">取消</button>
+        </div>
+      </Transition>
+
+      <!-- 列表视图 -->
+      <div v-if="viewMode === 'list'" class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th style="width:48px">选择</th>
-              <th>插件</th>
-              <th>描述</th>
-              <th style="width:80px">Skills</th>
-              <th style="width:80px">MCP</th>
-              <th style="width:90px">状态</th>
+              <th style="width:48px">
+                <input
+                  type="checkbox"
+                  class="row-check"
+                  :checked="allFilteredSelected"
+                  :indeterminate.prop="selectedCount > 0 && !allFilteredSelected"
+                  aria-label="全选当前列表"
+                  @change="toggleSelectAll"
+                >
+              </th>
+              <th class="sortable" :class="{ active: sortBy === 'name' }" @click="setSort('name')">
+                <span class="th-label">
+                  插件
+                  <svg class="sort-ic" :class="{ desc: sortBy === 'name' && sortDir === 'desc' }" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                </span>
+              </th>
+              <th class="sortable desc-col" :class="{ active: sortBy === 'description' }" @click="setSort('description')">
+                <span class="th-label">
+                  描述
+                  <svg class="sort-ic" :class="{ desc: sortBy === 'description' && sortDir === 'desc' }" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                </span>
+              </th>
+              <th class="sortable num-th" :class="{ active: sortBy === 'skills' }" @click="setSort('skills')">
+                <span class="th-label">
+                  Skills
+                  <svg class="sort-ic" :class="{ desc: sortBy === 'skills' && sortDir === 'desc' }" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                </span>
+              </th>
+              <th class="sortable num-th" :class="{ active: sortBy === 'mcp' }" @click="setSort('mcp')">
+                <span class="th-label">
+                  MCP
+                  <svg class="sort-ic" :class="{ desc: sortBy === 'mcp' && sortDir === 'desc' }" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                </span>
+              </th>
+              <th class="sortable" style="width:90px" :class="{ active: sortBy === 'status' }" @click="setSort('status')">
+                <span class="th-label">
+                  状态
+                  <svg class="sort-ic" :class="{ desc: sortBy === 'status' && sortDir === 'desc' }" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                </span>
+              </th>
               <th style="width:220px">操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="p in filteredPlugins" :key="p.file" :class="{ disabled: !p.installed }">
+            <tr v-for="p in sortedPlugins" :key="p.file" :class="{ disabled: !p.installed, selected: selectedForExport.has(p.file) }">
               <td>
                 <input
                   type="checkbox"
-                  class="pick"
+                  class="row-check"
                   :checked="selectedForExport.has(p.file)"
                   :aria-label="'选择 ' + p.name"
                   @change="toggleSelectForExport(p.file)"
@@ -228,13 +373,75 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
                 </div>
               </td>
             </tr>
-            <tr v-if="!filteredPlugins.length">
+            <tr v-if="!sortedPlugins.length">
               <td colspan="7" class="empty-cell">
                 {{ plugins.length ? '无匹配结果' : '暂无可用插件，点击「构建插件」或「导入」开始' }}
               </td>
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <!-- 图标视图 -->
+      <div v-else class="grid-wrap">
+        <article
+          v-for="p in sortedPlugins"
+          :key="p.file"
+          class="plugin-card"
+          :class="{ disabled: !p.installed, selected: selectedForExport.has(p.file) }"
+        >
+          <div class="card-top">
+            <input
+              type="checkbox"
+              class="row-check"
+              :checked="selectedForExport.has(p.file)"
+              :aria-label="'选择 ' + p.name"
+              @change="toggleSelectForExport(p.file)"
+            >
+            <div class="card-avatar" aria-hidden="true">{{ p.name.slice(0, 2) }}</div>
+            <span class="status" :class="p.installed ? 'on' : 'off'"><i />{{ p.installed ? '已安装' : '未安装' }}</span>
+          </div>
+          <div class="card-body">
+            <h3 :title="p.name">{{ p.name }}<span class="ver">v{{ p.version }}</span></h3>
+            <p class="card-desc" :title="p.description">{{ p.description || '暂无描述' }}</p>
+          </div>
+          <div class="card-meta">
+            <span class="mkt-chip brand">{{ p.skills_count || 0 }} skills</span>
+            <span class="mkt-chip">{{ p.mcp_count || 0 }} mcp</span>
+          </div>
+          <div class="card-foot">
+            <button
+              v-if="!p.installed"
+              type="button"
+              class="btn btn-primary btn-sm"
+              :disabled="!!installingPlugin"
+              @click="onTogglePlugin(p, true)"
+            >
+              {{ installingPlugin === p.name || installingPlugin === p.file ? '安装中…' : '安装' }}
+            </button>
+            <button
+              v-else
+              type="button"
+              class="btn btn-secondary btn-sm"
+              :disabled="!!installingPlugin"
+              @click="onTogglePlugin(p, false)"
+            >
+              卸载
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm" @click="onEdit(p.file)">编辑</button>
+            <div class="export-menu relative">
+              <button type="button" class="btn btn-ghost btn-sm" @click.stop="toggleExportMenu(p.file)">导出</button>
+              <div v-if="exportMenu === p.file" class="menu-panel" @click.stop>
+                <button type="button" @click="doExport(p.file, 'zip')">ZIP</button>
+                <button type="button" @click="doExport(p.file, 'yaml')">YAML</button>
+              </div>
+            </div>
+            <button type="button" class="btn btn-ghost btn-sm" title="发布到本地市场" @click="publishToMarketplace(p.file)">分享</button>
+          </div>
+        </article>
+        <div v-if="!sortedPlugins.length" class="empty-cell">
+          {{ plugins.length ? '无匹配结果' : '暂无可用插件，点击「构建插件」或「导入」开始' }}
+        </div>
       </div>
     </section>
 
@@ -265,6 +472,8 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   --green-bg: #e8ffea;
   --amber: #ff7d00;
   --amber-bg: #fff7e8;
+  --red: #f53f3f;
+  --red-bg: #ffece8;
   --glow: 0 0 0 3px var(--primary-container-strong);
   --card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.06);
   display: flex;
@@ -292,6 +501,8 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 .btn-secondary:hover:not(:disabled) { background: var(--bg-base); border-color: var(--border-strong); }
 .btn-ghost { background: transparent; color: var(--text-secondary); }
 .btn-ghost:hover:not(:disabled) { background: var(--bg-base); color: var(--text-primary); }
+.btn-danger-text { color: var(--text-secondary); }
+.btn-danger-text:hover:not(:disabled) { background: var(--red-bg); color: var(--red); }
 .btn:focus-visible { outline: none; box-shadow: var(--glow); }
 
 .btn-cluster { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -301,6 +512,17 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
 }
 .btn-pair .btn { border-radius: 0; border: none; height: 32px; border-right: 1px solid var(--border-base); }
 .btn-pair .btn:last-child { border-right: none; }
+
+.btn-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 5px;
+  margin-left: 4px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 10px; font-weight: 700;
+  border-radius: 8px;
+  line-height: 1;
+}
 
 .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .kpi {
@@ -338,9 +560,27 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
   color: var(--text-tertiary); border: none; background: transparent; cursor: pointer;
 }
 .seg button.on { background: var(--bg-elevated); color: var(--primary-hover); box-shadow: 0 1px 2px rgba(0, 0, 0, .06); }
+.seg.view-toggle button { padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; }
+.seg.view-toggle svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* 批量操作条 */
+.batch-bar {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px 4px 12px;
+  background: var(--primary-container);
+  border: 1px solid var(--primary-container-strong, rgba(22, 93, 255, 0.2));
+  border-radius: 8px;
+  font-size: 12px;
+  margin: 10px 18px 0;
+}
+.batch-count { font-weight: 600; color: var(--primary-hover); margin-right: 4px; font-variant-numeric: tabular-nums; }
+.batch-split { width: 1px; height: 16px; background: var(--border-base); margin: 0 4px; }
+
+.fade-slide-enter-active, .fade-slide-leave-active { transition: all 0.18s ease; }
+.fade-slide-enter-from, .fade-slide-leave-to { opacity: 0; transform: translateY(-4px); }
 
 .table-wrap { overflow: visible; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
 th {
   text-align: left; font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase;
   letter-spacing: .04em; padding: 11px 18px; background: var(--bg-base); border-bottom: 1px solid var(--border-base);
@@ -348,6 +588,38 @@ th {
 td { padding: 13px 18px; border-bottom: 1px solid #f7f8fa; vertical-align: middle; }
 tr:hover td { background: var(--bg-base); }
 tr.disabled td { opacity: .62; }
+tr.selected td { background: var(--primary-container); }
+tr.selected:hover td { background: rgba(22, 93, 255, 0.12); }
+
+/* 描述列宽控制：限制最大宽度，超出省略 */
+.desc-col { width: 320px; }
+td:nth-child(3) { width: 320px; }
+
+th.sortable {
+  cursor: pointer; user-select: none;
+  transition: color .15s ease, background .15s ease;
+}
+th.sortable:hover { color: var(--text-primary); background: var(--bg-elevated); }
+th.sortable.active { color: var(--primary); }
+th.sortable .th-label {
+  display: inline-flex; align-items: center; gap: 4px;
+}
+th.sortable .sort-ic {
+  width: 12px; height: 12px; flex-shrink: 0;
+  stroke: currentColor; fill: none; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round;
+  opacity: 0; transform: rotate(0deg); transition: opacity .15s ease, transform .2s ease;
+}
+th.sortable:hover .sort-ic { opacity: .45; }
+th.sortable.active .sort-ic { opacity: 1; }
+th.sortable.active .sort-ic.desc { transform: rotate(180deg); }
+.num-th { width: 90px; }
+
+.row-check {
+  width: 15px; height: 15px;
+  cursor: pointer;
+  accent-color: var(--primary);
+  vertical-align: middle;
+}
 
 .pick { width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer; }
 .name { font-weight: 600; color: var(--text-primary); }
@@ -357,7 +629,7 @@ tr.disabled td { opacity: .62; }
 }
 .desc {
   font-size: 12.5px; color: var(--text-tertiary); line-height: 1.4;
-  max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .num-cell {
   font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-secondary);
@@ -386,6 +658,39 @@ tr.disabled td { opacity: .62; }
 
 .empty-cell {
   text-align: center; color: var(--text-tertiary); font-size: 12.5px; padding: 28px 0;
+}
+
+/* 图标视图 */
+.grid-wrap {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px; padding: 16px 18px;
+}
+.plugin-card {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px;
+  border: 1px solid var(--border-base); border-radius: 12px; background: var(--bg-elevated);
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+.plugin-card:hover { border-color: var(--primary); box-shadow: 0 4px 16px rgba(22, 93, 255, .06); }
+.plugin-card.disabled { opacity: .65; }
+.plugin-card.selected { border-color: var(--primary); background: var(--primary-container); }
+.card-top { display: flex; align-items: center; gap: 10px; }
+.card-avatar {
+  width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center;
+  background: var(--primary); color: #fff; font-weight: 700; font-size: 12px;
+}
+.card-top .status { margin-left: auto; }
+.card-body h3 { margin: 0; font-size: 14px; font-weight: 700; color: var(--text-primary); }
+.card-desc {
+  margin: 4px 0 0; font-size: 12px; color: var(--text-tertiary); line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; min-height: 2.8em;
+}
+.card-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.mkt-chip { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px; background: var(--bg-base); color: var(--text-secondary); }
+.mkt-chip.brand { background: var(--primary-container); color: var(--primary-hover); }
+.card-foot {
+  margin-top: auto; display: flex; gap: 4px; flex-wrap: wrap; align-items: center;
+  padding-top: 10px; border-top: 1px solid var(--bg-base);
 }
 
 .float-bar {
@@ -426,9 +731,13 @@ tr.disabled td { opacity: .62; }
 
 @media (max-width: 960px) {
   .kpis { grid-template-columns: repeat(2, 1fr); }
+  .desc-col { width: 200px; }
+  td:nth-child(3) { width: 200px; }
 }
 @media (max-width: 620px) {
   .kpis { grid-template-columns: 1fr; }
+  .desc-col { width: 140px; }
+  td:nth-child(3) { width: 140px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .btn, .float-bar { transition: none !important; }
