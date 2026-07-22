@@ -116,6 +116,24 @@ type ExportTarget =
 const exportDialog = ref(false)
 const exportKeyMode = ref<KeyMode>('vault')
 const exportTarget = ref<ExportTarget | null>(null)
+// 导出内容选择（默认全选）
+const EXTRA_OPTIONS = [
+  { key: 'skills', label: 'Skills', desc: '技能目录' },
+  { key: 'llm', label: 'llm.yaml', desc: 'LLM 配置' },
+  { key: 'mcp', label: 'mcp.yaml', desc: 'MCP 服务配置' },
+  { key: 'keys', label: 'keys.yaml', desc: '密钥库' },
+  { key: 'subagents', label: 'subagents.yaml', desc: '子代理' },
+  { key: 'rules', label: 'rules', desc: '规则文件' },
+  { key: 'commands', label: 'commands.yaml', desc: '斜杠命令' },
+  { key: 'hooks', label: 'hooks.json', desc: '钩子' },
+] as const
+const exportExtras = ref<string[]>(['skills', 'llm', 'mcp', 'keys', 'subagents', 'rules', 'commands', 'hooks'])
+
+function toggleExtra(key: string) {
+  const i = exportExtras.value.indexOf(key)
+  if (i >= 0) exportExtras.value.splice(i, 1)
+  else exportExtras.value.push(key)
+}
 
 function openExportBatch() {
   if (!selectedForExport.value.size) {
@@ -124,6 +142,7 @@ function openExportBatch() {
   }
   exportTarget.value = { kind: 'batch' }
   exportKeyMode.value = 'vault'
+  exportExtras.value = [...EXTRA_OPTIONS.map(o => o.key)]
   exportDialog.value = true
 }
 
@@ -136,6 +155,7 @@ function openExportSingle(file: string, format: 'zip' | 'yaml') {
   }
   exportTarget.value = { kind: 'single', file, format }
   exportKeyMode.value = 'vault'
+  exportExtras.value = [...EXTRA_OPTIONS.map(o => o.key)]
   exportDialog.value = true
 }
 
@@ -148,12 +168,13 @@ async function confirmExport() {
   if (!exportTarget.value) return
   const mode = exportKeyMode.value
   const target = exportTarget.value
+  const extras = [...exportExtras.value]
   exportDialog.value = false
   exportTarget.value = null
   if (target.kind === 'batch') {
-    await exportSelectedPlugins(mode)
+    await exportSelectedPlugins(mode, extras)
   } else {
-    exportPlugin(target.file, target.format, mode)
+    exportPlugin(target.file, target.format, mode, extras)
   }
 }
 
@@ -522,7 +543,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
               <input v-model="exportKeyMode" type="radio" value="vault">
               <span class="opt-main">
                 <span class="opt-title">使用密钥库（推荐）</span>
-                <span class="opt-desc">llm.yaml 保留引用，额外导出 keys.yaml（含被引用密钥的真实值）。接收方导入后无需逐个填密码。</span>
+                <span class="opt-desc">明文 api_key 替换为 ${KEY} 引用，额外导出 keys.yaml（含真实值）。接收方导入后无需逐个填密码。</span>
               </span>
             </label>
             <label class="opt-row" :class="{ on: exportKeyMode === 'plain' }">
@@ -539,6 +560,26 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
                 <span class="opt-desc">llm.yaml 的 api_key 置空，keys.yaml 仅保留密钥名与描述。适合公开分享，接收方需自填密钥。</span>
               </span>
             </label>
+
+            <div class="extras-section">
+              <p class="modal-hint">导出内容（基于哪些配置文件）</p>
+              <div class="extras-grid">
+                <label
+                  v-for="opt in EXTRA_OPTIONS"
+                  :key="opt.key"
+                  class="extra-chip"
+                  :class="{ on: exportExtras.includes(opt.key) }"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="exportExtras.includes(opt.key)"
+                    @change="toggleExtra(opt.key)"
+                  >
+                  <span class="extra-label">{{ opt.label }}</span>
+                  <span class="extra-desc">{{ opt.desc }}</span>
+                </label>
+              </div>
+            </div>
           </div>
           <footer class="modal-foot">
             <button type="button" class="btn btn-ghost" @click="cancelExport">取消</button>
@@ -851,6 +892,21 @@ th.sortable.active .sort-ic.desc { transform: rotate(180deg); }
 .opt-main { display: flex; flex-direction: column; gap: 3px; }
 .opt-title { font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .opt-desc { font-size: 12px; color: var(--text-tertiary); line-height: 1.45; }
+
+/* 导出内容多选 */
+.extras-section { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--border-base); }
+.extras-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.extra-chip {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border: 1px solid var(--border-base); border-radius: 8px; cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+.extra-chip:hover { border-color: var(--primary); }
+.extra-chip.on { border-color: var(--primary); background: var(--primary-container); }
+.extra-chip input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--primary); flex-shrink: 0; }
+.extra-label { font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.extra-desc { font-size: 11px; color: var(--text-tertiary); }
+
 .modal-foot {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 12px 20px; border-top: 1px solid var(--border-base);

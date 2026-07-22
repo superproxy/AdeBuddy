@@ -7,8 +7,9 @@ import { useMcpStore } from '../stores/mcp'
 import { useSkillStore } from '../stores/skill'
 import { usePluginStore } from '../stores/plugin'
 import { useAiGenerateStore } from '../stores/aiGenerate'
+import { useKeysStore } from '../stores/keys'
 
-type CatKey = 'llm' | 'mcp' | 'skill' | 'agent' | 'rule' | 'cmd'
+type CatKey = 'llm' | 'mcp' | 'skill' | 'key' | 'agent' | 'rule' | 'cmd'
 
 const pb = usePluginBuildStore()
 const env = useEnvStore()
@@ -16,20 +17,22 @@ const mcp = useMcpStore()
 const skill = useSkillStore()
 const plugin = usePluginStore()
 const ai = useAiGenerateStore()
+const keys = useKeysStore()
 const { dialogOpen, prompt, level, generating, output, generatedConfig } = storeToRefs(ai)
 
 const {
   pluginForm, selectedSkills, selectedMcp, selectedLlm,
-  selectedSubagents, selectedRules, selectedCommands, hooksEnabled,
+  selectedSubagents, selectedRules, selectedCommands, selectedKeys, hooksEnabled,
   availableSubagents, availableRules, availableCommands,
   ideImport, ideImportStats, importedIdeMcp, wizardStep, buildMode, mcpFilterText, importing,
 } = storeToRefs(pb)
 const { mcpTemplate } = storeToRefs(mcp)
 const { skillCategories, filteredLocalSkills, skillFilter } = storeToRefs(skill)
 const { plugins, selectedPluginFile } = storeToRefs(plugin)
+const { keysData } = storeToRefs(keys)
 
 const {
-  toggleSkill, toggleMcp, toggleLlm, toggleSubagent, toggleRule, toggleCommand,
+  toggleSkill, toggleMcp, toggleLlm, toggleSubagent, toggleRule, toggleCommand, toggleKey,
   llmKey, wizardNext, wizardPrev, wizardGoto, newPlugin, loadBuildSources,
   importFromIde, applyImportedMcp, applyImportedSkills, applyImportedLlm,
   loadExistingPlugin, previewPlugin, savePluginFile, installPluginFile,
@@ -45,6 +48,7 @@ const CAT_META: Record<CatKey, { title: string; hint: string; label: string; sub
   llm: { title: '本地 LLM', hint: '勾选要打包的 Provider', label: 'LLM', sub: '模型 Provider' },
   mcp: { title: '本地 MCP', hint: '过滤并勾选 MCP 服务', label: 'MCP', sub: '工具服务' },
   skill: { title: '本地 Skill', hint: '按名称或描述搜索', label: 'Skill', sub: '技能包' },
+  key: { title: '密钥库', hint: '选择要打包的密钥（导出 vault 模式会附带 keys.yaml）', label: 'Keys', sub: '密钥变量' },
   agent: { title: 'Subagent', hint: '选择要打包的角色', label: 'Agent', sub: '子代理' },
   rule: { title: 'Rules', hint: '选择规则文件', label: 'Rules', sub: '规则约束' },
   cmd: { title: 'Commands', hint: '选择斜杠命令', label: 'Cmd', sub: '斜杠命令' },
@@ -78,19 +82,20 @@ const counts = computed(() => ({
   llm: selectedLlm.value.length,
   mcp: selectedMcp.value.length,
   skill: selectedSkills.value.length,
+  key: selectedKeys.value.length,
   agent: selectedSubagents.value.length,
   rule: selectedRules.value.length,
   cmd: selectedCommands.value.length,
 }))
 
 const totalSelected = computed(() =>
-  counts.value.llm + counts.value.mcp + counts.value.skill
+  counts.value.llm + counts.value.mcp + counts.value.skill + counts.value.key
   + counts.value.agent + counts.value.rule + counts.value.cmd
   + (hooksEnabled.value ? 1 : 0),
 )
 
 const filledLayers = computed(() =>
-  (['llm', 'mcp', 'skill', 'agent', 'rule', 'cmd'] as CatKey[]).filter(k => counts.value[k] > 0).length,
+  (['llm', 'mcp', 'skill', 'key', 'agent', 'rule', 'cmd'] as CatKey[]).filter(k => counts.value[k] > 0).length,
 )
 
 const completeness = computed(() => {
@@ -108,6 +113,7 @@ const catTotal = computed(() => {
     case 'llm': return localLlmList.value.length
     case 'mcp': return mcpNames.value.length
     case 'skill': return filteredLocalSkills.value.length
+    case 'key': return Object.keys(keysData.value.mcp || {}).length
     case 'agent': return availableSubagents.value.length
     case 'rule': return availableRules.value.length
     case 'cmd': return availableCommands.value.length
@@ -171,10 +177,26 @@ const filteredCmds = computed(() => {
   )
 })
 
+// 密钥列表（按 q 过滤）
+const filteredKeys = computed(() => {
+  const entries = Object.entries(keysData.value.mcp || {}).map(([k, v]: [string, any]) => ({
+    key: k,
+    value: typeof v === 'object' && v ? (v.value || '') : (typeof v === 'string' ? v : ''),
+    description: typeof v === 'object' && v ? (v.description || '') : '',
+  }))
+  const qq = q.value
+  if (!qq) return entries
+  return entries.filter(e =>
+    e.key.toLowerCase().includes(qq)
+    || e.description.toLowerCase().includes(qq),
+  )
+})
+
 const packSections = computed(() => [
   { key: 'llm' as CatKey, label: 'LLM', items: selectedLlm.value.map(id => ({ id, label: id.split('@')[0] || id })) },
   { key: 'mcp' as CatKey, label: 'MCP', items: selectedMcp.value.map(id => ({ id, label: id })) },
   { key: 'skill' as CatKey, label: 'Skill', items: selectedSkills.value.map(id => ({ id, label: id })) },
+  { key: 'key' as CatKey, label: 'Keys', items: selectedKeys.value.map(id => ({ id, label: id })) },
   { key: 'agent' as CatKey, label: 'Agent', items: selectedSubagents.value.map(id => ({ id, label: id })) },
   { key: 'rule' as CatKey, label: 'Rules', items: selectedRules.value.map(id => ({ id, label: id.split(/[/\\]/).pop() || id })) },
   { key: 'cmd' as CatKey, label: 'Cmd', items: selectedCommands.value.map(id => ({ id, label: id })) },
@@ -199,6 +221,7 @@ function removePack(key: CatKey, id: string) {
     case 'llm': toggleLlm(id); break
     case 'mcp': toggleMcp(id); break
     case 'skill': toggleSkill(id); break
+    case 'key': toggleKey(id); break
     case 'agent': toggleSubagent(id); break
     case 'rule': toggleRule(id); break
     case 'cmd': toggleCommand(id); break
@@ -221,6 +244,11 @@ function selectAllCat() {
     case 'skill':
       for (const s of filteredLocalSkills.value) {
         if (!selectedSkills.value.includes(s.skill_name)) toggleSkill(s.skill_name)
+      }
+      break
+    case 'key':
+      for (const k of Object.keys(keysData.value.mcp || {})) {
+        if (!selectedKeys.value.includes(k)) toggleKey(k)
       }
       break
     case 'agent':
@@ -251,6 +279,9 @@ function clearCat() {
       break
     case 'skill':
       [...selectedSkills.value].forEach(n => toggleSkill(n))
+      break
+    case 'key':
+      [...selectedKeys.value].forEach(n => toggleKey(n))
       break
     case 'agent':
       [...selectedSubagents.value].forEach(n => toggleSubagent(n))
@@ -371,7 +402,7 @@ onMounted(() => {
         <div class="pb-rail-label">类型</div>
         <nav class="pb-rail-nav">
           <button
-            v-for="key in (['llm','mcp','skill','agent','rule','cmd'] as CatKey[])"
+            v-for="key in (['llm','mcp','skill','key','agent','rule','cmd'] as CatKey[])"
             :key="key"
             type="button"
             class="pb-cat"
@@ -383,6 +414,7 @@ onMounted(() => {
               <svg v-if="key === 'llm'" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z" /><path d="M2 17l10 5 10-5M2 12l10 5 10-5" /></svg>
               <svg v-else-if="key === 'mcp'" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8" /></svg>
               <svg v-else-if="key === 'skill'" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></svg>
+              <svg v-else-if="key === 'key'" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3" /></svg>
               <svg v-else-if="key === 'agent'" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg>
               <svg v-else-if="key === 'rule'" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" /></svg>
               <svg v-else viewBox="0 0 24 24"><path d="M4 17l6-6-6-6M12 19h8" /></svg>
@@ -508,6 +540,36 @@ onMounted(() => {
                 <span class="foot">
                   <span class="dot" :class="{ on: selectedSkills.includes(s.skill_name) }" />
                   {{ selectedSkills.includes(s.skill_name) ? '已加入装箱' : '点击加入装箱' }}
+                </span>
+              </span>
+            </button>
+          </template>
+
+          <!-- Keys -->
+          <template v-else-if="activeCat === 'key'">
+            <div v-if="!filteredKeys.length" class="pb-empty">
+              <div class="icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.3-4.3" /></svg></div>
+              <strong>{{ Object.keys(keysData.mcp || {}).length ? '没有匹配项' : '密钥库为空' }}</strong>
+              <p>{{ Object.keys(keysData.mcp || {}).length ? '换个关键词试试' : '请到密钥管理 tab 添加' }}</p>
+            </div>
+            <button
+              v-for="k in filteredKeys"
+              :key="k.key"
+              type="button"
+              class="pb-item"
+              :class="{ on: selectedKeys.includes(k.key) }"
+              role="option"
+              :aria-selected="selectedKeys.includes(k.key)"
+              @click="toggleKey(k.key)"
+            >
+              <span class="check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5" /></svg></span>
+              <span class="avatar">{{ initials(k.key) }}</span>
+              <span class="body">
+                <span class="title">{{ k.key }}</span>
+                <span class="meta">{{ k.description || '无描述' }}</span>
+                <span class="foot">
+                  <span class="dot" :class="{ on: selectedKeys.includes(k.key) }" />
+                  {{ selectedKeys.includes(k.key) ? '已加入装箱' : '点击加入装箱' }}
                 </span>
               </span>
             </button>

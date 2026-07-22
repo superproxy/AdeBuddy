@@ -2057,6 +2057,49 @@ def _find_referenced_keys(*texts: str) -> set:
     return refs
 
 
+def _build_value_to_key_map() -> dict:
+    """构建 {密钥明文值 -> key名} 反向映射，用于把明文替换为 ${KEY} 引用。"""
+    try:
+        full = _load_keys_full()
+    except Exception:
+        return {}
+    all_keys = full.get("mcp", {}) if isinstance(full, dict) else {}
+    mapping = {}
+    for k, entry in all_keys.items():
+        if isinstance(entry, dict):
+            v = entry.get("value", "")
+            if v and isinstance(v, str) and len(v) >= 8:  # 太短的值不替换，避免误匹配
+                mapping[v] = k
+    return mapping
+
+
+def _replace_plaintext_with_refs(obj, value_map: dict):
+    """深拷贝并把明文密钥值替换为 ${KEY} 引用（仅替换 api_key 字段和 ${...} 可识别的值）。
+
+    替换策略：
+    - api_key 字段：若值与 keys.yaml 某条目的 value 完全相同，替换为 ${KEY}
+    - 其他字符串字段中的明文值也做替换（覆盖 env/args 等）
+    """
+    import copy
+    cloned = copy.deepcopy(obj)
+
+    def _walk(o):
+        if isinstance(o, dict):
+            for k, v in list(o.items()):
+                if isinstance(v, str) and v in value_map:
+                    o[k] = "${" + value_map[v] + "}"
+                else:
+                    _walk(v)
+        elif isinstance(o, list):
+            for i, item in enumerate(o):
+                if isinstance(item, str) and item in value_map:
+                    o[i] = "${" + value_map[item] + "}"
+                else:
+                    _walk(item)
+    _walk(cloned)
+    return cloned
+
+
 def _build_keys_yaml_for_export(referenced: set, include_values: bool) -> str | None:
     """构建导出用 keys.yaml 内容（仅含被引用的密钥）。
 
@@ -2091,7 +2134,7 @@ def _collect_plugin_llm(cfg: dict, key_mode: str = "plain") -> str | None:
 
     key_mode:
       - plain: 原样导出（含 api_key 明文或 env: 引用）
-      - vault: 原样导出（引用保留，密钥值由 keys.yaml 单独导出）
+      - vault: 明文 api_key 替换为 ${KEY} 引用（若 keys.yaml 有相同值），密钥值由 keys.yaml 单独导出
       - redacted: 脱敏导出（api_key 字段置空）
     返回 YAML 字符串（仅含声明的 provider），如无匹配返回 None。
     """
@@ -2115,6 +2158,8 @@ def _collect_plugin_llm(cfg: dict, key_mode: str = "plain") -> str | None:
     except Exception:
         return None
     llm_section = llm_data.get("llm", {}) if isinstance(llm_data, dict) else {}
+    # vault 模式：构建明文→key名 反向映射，用于替换明文
+    value_map = _build_value_to_key_map() if key_mode == "vault" else {}
     extracted = {"llm": {}}
     if "_active_provider" in llm_section:
         extracted["llm"]["_active_provider"] = llm_section["_active_provider"]
@@ -2126,6 +2171,8 @@ def _collect_plugin_llm(cfg: dict, key_mode: str = "plain") -> str | None:
             prov_cfg = llm_section[pname]
             if key_mode == "redacted":
                 prov_cfg = _strip_api_keys_deep(prov_cfg)
+            elif key_mode == "vault" and value_map:
+                prov_cfg = _replace_plaintext_with_refs(prov_cfg, value_map)
             extracted["llm"][pname] = prov_cfg
             found = True
     if not found:
@@ -2219,7 +2266,7 @@ def _collect_plugin_hooks(cfg: dict) -> Path | None:
 
 
 def _add_plugin_extras_to_zip(zf: zipfile.ZipFile, cfg: dict, seen: set[str] | None = None,
-                             key_mode: str = "plain") -> None:
+                             key_mode: str = "plain", extras: set[str] | None = None) -> None:
     """将 plugin 关联的 llm/subagents/rules/commands/hooks 打包到 zip。
 
     Args:
@@ -2227,8 +2274,10 @@ def _add_plugin_extras_to_zip(zf: zipfile.ZipFile, cfg: dict, seen: set[str] | N
               同名文件重复写入 zip。单插件导出不传（None）时跳过去重。
         key_mode:
           - plain: 原样导出 llm.yaml（含 api_key），不导出 keys.yaml
-          - vault: 原样导出 llm.yaml + keys.yaml（含被引用密钥的明文值）
+          - vault: 明文替换为 ${KEY} 引用 + keys.yaml（含被引用密钥的明文值）
           - redacted: 脱敏 llm.yaml（api_key 置空）+ keys.yaml（仅结构与描述）
+        extras: 选择性导出哪些配置文件，集合元素为 'llm'/'mcp'/'subagents'/'rules'/'commands'/'hooks'/'keys'。
+                None 表示全部导出（向后兼容）。
     """
     def _should_write(name: str) -> bool:
         if seen is None:
@@ -2238,41 +2287,71 @@ def _add_plugin_extras_to_zip(zf: zipfile.ZipFile, cfg: dict, seen: set[str] | N
         seen.add(name)
         return True
 
+    def _extra_on(key: str) -> bool:
+        return extras is None or key in extras
+
+    # vault 模式下构建明文→key名 反向映射（供 mcpServers 替换用）
+    value_map = _build_value_to_key_map() if key_mode == "vault" else {}
+
     # llm.yaml
-    llm_yaml_str = _collect_plugin_llm(cfg, key_mode)
-    if llm_yaml_str and _should_write("llm.yaml"):
-        zf.writestr("llm.yaml", llm_yaml_str)
+    if _extra_on("llm"):
+        llm_yaml_str = _collect_plugin_llm(cfg, key_mode)
+        if llm_yaml_str and _should_write("llm.yaml"):
+            zf.writestr("llm.yaml", llm_yaml_str)
+    else:
+        llm_yaml_str = ""
+
+    # mcp.yaml（选择性导出：把 plugin 声明的 mcpServers 单独打包为 mcp.yaml）
+    mcp_text = ""
+    if _extra_on("mcp"):
+        mcp_servers = cfg.get("mcpServers", {}) or {}
+        if mcp_servers and isinstance(mcp_servers, dict):
+            mcp_to_export = mcp_servers
+            if key_mode == "vault" and value_map:
+                mcp_to_export = _replace_plaintext_with_refs(mcp_servers, value_map)
+            elif key_mode == "redacted":
+                mcp_to_export = _strip_api_keys_deep(mcp_servers)
+            import yaml as _yaml_mcp
+            mcp_text = _yaml_mcp.dump({"mcpServers": mcp_to_export},
+                                      allow_unicode=True, default_flow_style=False, sort_keys=False)
+            if mcp_text and _should_write("mcp.yaml"):
+                zf.writestr("mcp.yaml", mcp_text)
 
     # subagents.yaml
-    sa_yaml_str = _collect_plugin_subagents(cfg)
-    if sa_yaml_str and _should_write("subagents.yaml"):
-        zf.writestr("subagents.yaml", sa_yaml_str)
+    if _extra_on("subagents"):
+        sa_yaml_str = _collect_plugin_subagents(cfg)
+        if sa_yaml_str and _should_write("subagents.yaml"):
+            zf.writestr("subagents.yaml", sa_yaml_str)
 
     # rules/*.md
-    for rel, rule_path in _collect_plugin_rules(cfg):
-        arc = f"rules/{rel}"
-        if _should_write(arc):
-            zf.write(rule_path, arcname=arc)
+    if _extra_on("rules"):
+        for rel, rule_path in _collect_plugin_rules(cfg):
+            arc = f"rules/{rel}"
+            if _should_write(arc):
+                zf.write(rule_path, arcname=arc)
 
     # commands.yaml
-    cmd_yaml_str = _collect_plugin_commands(cfg)
-    if cmd_yaml_str and _should_write("commands.yaml"):
-        zf.writestr("commands.yaml", cmd_yaml_str)
+    if _extra_on("commands"):
+        cmd_yaml_str = _collect_plugin_commands(cfg)
+        if cmd_yaml_str and _should_write("commands.yaml"):
+            zf.writestr("commands.yaml", cmd_yaml_str)
 
     # hooks/hooks.json
-    hooks_path = _collect_plugin_hooks(cfg)
-    if hooks_path and _should_write("hooks/hooks.json"):
-        zf.write(hooks_path, arcname="hooks/hooks.json")
+    if _extra_on("hooks"):
+        hooks_path = _collect_plugin_hooks(cfg)
+        if hooks_path and _should_write("hooks/hooks.json"):
+            zf.write(hooks_path, arcname="hooks/hooks.json")
 
     # 密钥库 keys.yaml：vault / redacted 模式下导出被引用的密钥
-    if key_mode in ("vault", "redacted"):
-        import yaml as _yaml
-        try:
-            mcp_text = _yaml.dump(cfg.get("mcpServers", {}), allow_unicode=True,
-                                  default_flow_style=False, sort_keys=False)
-        except Exception:
-            mcp_text = ""
+    if key_mode in ("vault", "redacted") and _extra_on("keys"):
+        # 收集引用：llm.yaml + mcp.yaml/mcpServers + plugin.yaml 显式声明的 keys 字段
         refs = _find_referenced_keys(llm_yaml_str or "", mcp_text)
+        # plugin.yaml 的 keys 字段（构建页显式选择的密钥名）
+        declared_keys = cfg.get("keys", []) or []
+        if isinstance(declared_keys, list):
+            for k in declared_keys:
+                if isinstance(k, str) and k.strip():
+                    refs.add(k.strip())
         keys_yaml_str = _build_keys_yaml_for_export(refs, include_values=(key_mode == "vault"))
         if keys_yaml_str and _should_write("keys/keys.yaml"):
             zf.writestr("keys/keys.yaml", keys_yaml_str)
@@ -2338,9 +2417,9 @@ def save_plugin():
     if "author" not in config:
         config["author"] = (body.get("author", "AgentBuddy") or "AgentBuddy").strip()
     # AgentBuddy 扩展字段（多 IDE 同步能力）
-    for k in ("mcpServers", "skills", "llm", "subagents", "rules", "commands"):
+    for k in ("mcpServers", "skills", "llm", "subagents", "rules", "commands", "keys"):
         if k in body:
-            config[k] = body[k] if body[k] is not None else ([] if k in ("skills", "llm", "subagents", "rules", "commands") else {})
+            config[k] = body[k] if body[k] is not None else ([] if k in ("skills", "llm", "subagents", "rules", "commands", "keys") else {})
     config["hooks"] = bool(body.get("hooks", False))
     # scripts 对齐 npm 生命周期（install/postinstall/preinstall/preuninstall/uninstall/postuninstall/prepare）
     scripts = body.get("scripts")
@@ -2413,6 +2492,11 @@ def export_plugin():
     key_mode = (request.args.get("key_mode") or "plain").strip().lower()
     if key_mode not in ("plain", "vault", "redacted"):
         key_mode = "plain"
+    # extras：选择性导出哪些配置文件（逗号分隔），None=全部
+    extras_raw = (request.args.get("extras") or "").strip()
+    extras: set[str] | None = None
+    if extras_raw:
+        extras = {e.strip() for e in extras_raw.split(",") if e.strip()}
     if not fname:
         return jsonify({"ok": False, "error": "缺少 file 参数"}), 400
     path = _resolve_plugin_path(fname)
@@ -2438,10 +2522,12 @@ def export_plugin():
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.write(path, arcname=fname)
-            for skill_name, skill_dir in skill_dirs:
-                _add_dir_to_zip(zf, skill_dir, arc_prefix=f"skills/{skill_name}")
+            # skills 选择性导出
+            if extras is None or "skills" in extras:
+                for skill_name, skill_dir in skill_dirs:
+                    _add_dir_to_zip(zf, skill_dir, arc_prefix=f"skills/{skill_name}")
             # 打包 llm/subagents/rules/commands/hooks（+ 可选 keys.yaml）
-            _add_plugin_extras_to_zip(zf, cfg, key_mode=key_mode)
+            _add_plugin_extras_to_zip(zf, cfg, key_mode=key_mode, extras=extras)
 
         buf.seek(0)
         safe_name = "".join(c for c in plugin_name if c.isalnum() or c in ("-", "_"))
@@ -2465,6 +2551,10 @@ def export_all_plugins():
     key_mode = (request.args.get("key_mode") or "plain").strip().lower()
     if key_mode not in ("plain", "vault", "redacted"):
         key_mode = "plain"
+    extras_raw = (request.args.get("extras") or "").strip()
+    extras: set[str] | None = None
+    if extras_raw:
+        extras = {e.strip() for e in extras_raw.split(",") if e.strip()}
     buf = io.BytesIO()
     seen_skills: set[str] = set()
     seen_files: set[str] = set()
@@ -2480,12 +2570,13 @@ def export_all_plugins():
                 zf.write(f, arcname=f.name)
                 try:
                     cfg = load_env_config_file(f)
-                    for skill_name, skill_dir in _collect_plugin_skill_dirs(cfg):
-                        if skill_name in seen_skills:
-                            continue
-                        seen_skills.add(skill_name)
-                        _add_dir_to_zip(zf, skill_dir, arc_prefix=f"skills/{skill_name}")
-                    _add_plugin_extras_to_zip(zf, cfg, seen_extras, key_mode=key_mode)
+                    if extras is None or "skills" in extras:
+                        for skill_name, skill_dir in _collect_plugin_skill_dirs(cfg):
+                            if skill_name in seen_skills:
+                                continue
+                            seen_skills.add(skill_name)
+                            _add_dir_to_zip(zf, skill_dir, arc_prefix=f"skills/{skill_name}")
+                    _add_plugin_extras_to_zip(zf, cfg, seen_extras, key_mode=key_mode, extras=extras)
                 except Exception:
                     pass  # 单个插件解析失败不阻塞
     buf.seek(0)
@@ -2511,6 +2602,10 @@ def export_selected_plugins():
     key_mode = (request.args.get("key_mode") or "plain").strip().lower()
     if key_mode not in ("plain", "vault", "redacted"):
         key_mode = "plain"
+    extras_raw = (request.args.get("extras") or "").strip()
+    extras: set[str] | None = None
+    if extras_raw:
+        extras = {e.strip() for e in extras_raw.split(",") if e.strip()}
 
     buf = io.BytesIO()
     seen_skills: set[str] = set()
@@ -2526,12 +2621,13 @@ def export_selected_plugins():
             zf.write(path, arcname=fname)
             try:
                 cfg = load_env_config_file(path)
-                for skill_name, skill_dir in _collect_plugin_skill_dirs(cfg):
-                    if skill_name in seen_skills:
-                        continue
-                    seen_skills.add(skill_name)
-                    _add_dir_to_zip(zf, skill_dir, arc_prefix=f"skills/{skill_name}")
-                _add_plugin_extras_to_zip(zf, cfg, seen_extras, key_mode=key_mode)
+                if extras is None or "skills" in extras:
+                    for skill_name, skill_dir in _collect_plugin_skill_dirs(cfg):
+                        if skill_name in seen_skills:
+                            continue
+                        seen_skills.add(skill_name)
+                        _add_dir_to_zip(zf, skill_dir, arc_prefix=f"skills/{skill_name}")
+                _add_plugin_extras_to_zip(zf, cfg, seen_extras, key_mode=key_mode, extras=extras)
             except Exception:
                 pass  # 单个插件解析失败不阻塞
     buf.seek(0)

@@ -70,10 +70,12 @@ export const usePluginStore = defineStore('plugin', () => {
     if (r.ok) plugins.value = r.data || []
   }
   function exportPlugin(file: string, format: 'zip' | 'yaml' = 'zip',
-                         keyMode: 'plain' | 'vault' | 'redacted' = 'plain') {
+                         keyMode: 'plain' | 'vault' | 'redacted' = 'plain',
+                         extras?: string[]) {
     const params = new URLSearchParams({
       file, format, key_mode: keyMode,
     })
+    if (extras && extras.length) params.set('extras', extras.join(','))
     doDownload('/api/plugin/export?' + params.toString(),
                format === 'zip' ? `${file.replace('.plugin.yaml', '')}.zip` : file)
   }
@@ -96,13 +98,15 @@ export const usePluginStore = defineStore('plugin', () => {
   function clearExportSelection() {
     selectedForExport.value = new Set()
   }
-  async function exportSelectedPlugins(keyMode: 'plain' | 'vault' | 'redacted' = 'plain') {
+  async function exportSelectedPlugins(keyMode: 'plain' | 'vault' | 'redacted' = 'plain',
+                                        extras?: string[]) {
     const files = Array.from(selectedForExport.value)
     if (!files.length) {
       ui.toast('请先勾选要导出的插件', 'warn')
       return
     }
-    const params = files.map(f => 'files=' + encodeURIComponent(f)).join('&') + '&key_mode=' + keyMode
+    let params = files.map(f => 'files=' + encodeURIComponent(f)).join('&') + '&key_mode=' + keyMode
+    if (extras && extras.length) params += '&extras=' + extras.join(',')
     await doDownload('/api/plugin/export-selected?' + params, 'plugins-selected.zip')
   }
   function triggerImportPlugin() {

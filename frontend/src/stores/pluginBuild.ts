@@ -8,6 +8,7 @@ import { useSkillStore } from './skill'
 import { useMcpStore } from './mcp'
 import { useEnvStore } from './env'
 import { usePluginStore } from './plugin'
+import { useKeysStore } from './keys'
 
 export const wizardSteps = [
   { title: '扫描 IDE', desc: '一键扫描本地 IDE 已配置的 LLM / MCP / Skill' },
@@ -26,6 +27,7 @@ export const usePluginBuildStore = defineStore('pluginBuild', () => {
   const mcp = useMcpStore()
   const env = useEnvStore()
   const plugin = usePluginStore()
+  const keysStore = useKeysStore()
 
   const pluginForm = reactive({ name: '', version: '1.0.0', description: '', author: 'AgentBuddy', install_script: '' })
   // 已加载插件的标准元数据（load → edit → save 时保留，避免丢失 license/keywords/categories 等字段）
@@ -37,6 +39,7 @@ export const usePluginBuildStore = defineStore('pluginBuild', () => {
   const selectedSubagents = ref<string[]>([])
   const selectedRules = ref<string[]>([])
   const selectedCommands = ref<string[]>([])
+  const selectedKeys = ref<string[]>([])
   const hooksEnabled = ref(false)
   // 源数据
   const availableSubagents = ref<any[]>([])
@@ -76,6 +79,10 @@ export const usePluginBuildStore = defineStore('pluginBuild', () => {
     const i = selectedCommands.value.indexOf(name)
     if (i >= 0) selectedCommands.value.splice(i, 1); else selectedCommands.value.push(name)
   }
+  function toggleKey(key: string) {
+    const i = selectedKeys.value.indexOf(key)
+    if (i >= 0) selectedKeys.value.splice(i, 1); else selectedKeys.value.push(key)
+  }
   function llmKey(l: any) { return l.provider + '@' + l.protocol }
   function wizardNext() { if (wizardStep.value < wizardSteps.length - 1) wizardStep.value++ }
   function wizardPrev() { if (wizardStep.value > 0) wizardStep.value-- }
@@ -87,6 +94,7 @@ export const usePluginBuildStore = defineStore('pluginBuild', () => {
     loadedMeta.value = {}
     selectedSkills.value = []; selectedMcp.value = []; selectedLlm.value = []
     selectedSubagents.value = []; selectedRules.value = []; selectedCommands.value = []
+    selectedKeys.value = []
     hooksEnabled.value = false
     wizardStep.value = 0
   }
@@ -100,6 +108,8 @@ export const usePluginBuildStore = defineStore('pluginBuild', () => {
     if (saRes.ok) availableSubagents.value = saRes.data?.subagents || []
     if (rulesRes.ok) availableRules.value = rulesRes.data || []
     if (cmdRes.ok) availableCommands.value = cmdRes.data?.commands || []
+    // 加载密钥库（供构建页选择要打包的密钥）
+    await keysStore.loadKeys()
   }
   async function importFromIde() {
     if (importing.value) return
@@ -171,6 +181,7 @@ export const usePluginBuildStore = defineStore('pluginBuild', () => {
     selectedSubagents.value = [...(d.subagents || [])]
     selectedRules.value = [...(d.rules || [])]
     selectedCommands.value = [...(d.commands || [])]
+    selectedKeys.value = [...(d.keys || [])]
     hooksEnabled.value = !!d.hooks
     // 保留标准元数据字段（load → edit → save 不丢失）
     const metaKeys = ['license', 'keywords', 'categories', 'homepage', 'repository', 'icon',
@@ -212,6 +223,7 @@ export const usePluginBuildStore = defineStore('pluginBuild', () => {
       subagents: selectedSubagents.value,
       rules: selectedRules.value,
       commands: selectedCommands.value,
+      keys: selectedKeys.value,
       hooks: hooksEnabled.value,
       scripts: pluginForm.install_script.trim() ? { install: pluginForm.install_script.trim() } : {},
     }
@@ -243,10 +255,10 @@ export const usePluginBuildStore = defineStore('pluginBuild', () => {
 
   return {
     pluginForm, selectedSkills, selectedMcp, selectedLlm,
-    selectedSubagents, selectedRules, selectedCommands, hooksEnabled,
+    selectedSubagents, selectedRules, selectedCommands, selectedKeys, hooksEnabled,
     availableSubagents, availableRules, availableCommands,
     ideImport, ideImportStats, importedIdeMcp, importedIdeSkills, wizardStep, buildMode, mcpFilterText, importing,
-    toggleSkill, toggleMcp, toggleLlm, toggleSubagent, toggleRule, toggleCommand,
+    toggleSkill, toggleMcp, toggleLlm, toggleSubagent, toggleRule, toggleCommand, toggleKey,
     llmKey, wizardNext, wizardPrev, wizardGoto, newPlugin, loadBuildSources,
     importFromIde, importAllIdeMcp, importAllIdeSkills, applyImportedMcp, applyImportedSkills, applyImportedLlm,
     loadExistingPlugin, buildPluginConfig, previewPlugin, savePluginFile, installPluginFile,
