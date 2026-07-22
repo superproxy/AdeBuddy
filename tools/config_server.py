@@ -4248,25 +4248,52 @@ def save_subagent():
 # ============================================================
 # LLM key 验证 + model 获取（调 provider 的 /v1/models）
 # ============================================================
+@app.route("/api/llm/env-vars", methods=["GET"])
+def list_llm_env_vars():
+    """返回系统中可用的环境变量名（仅含 KEY/TOKEN/SECRET 关键字），用于 api_key 引用选择。"""
+    import re as _re
+    pattern = _re.compile(r"KEY|TOKEN|SECRET", _re.IGNORECASE)
+    names = sorted({k for k in os.environ.keys() if pattern.search(k)})
+    return jsonify({"ok": True, "names": names, "count": len(names)})
+
+
+def _resolve_api_key(raw: str) -> str:
+    """解析 api_key 字段：支持 env:VAR_NAME 形式从环境变量读取实际值。"""
+    if not raw:
+        return ""
+    s = raw.strip()
+    if s.startswith("env:"):
+        var_name = s[4:].strip()
+        if not var_name:
+            return ""
+        return os.environ.get(var_name, "")
+    return s
+
+
 @app.route("/api/llm/verify", methods=["POST"])
 def verify_llm():
     """验证 LLM api_key 是否可用，并返回可用 model 列表。
 
     Body: {base_url, api_key, protocol?}
-    调 base_url + /v1/models（OpenAI 兼容），成功返回 model 列表。
+    调 base_url + /models（OpenAI 兼容），成功返回 model 列表。
+    api_key 支持 env:VAR_NAME 引用形式。
     """
     body = request.get_json(force=True)
     base_url = (body.get("base_url") or "").rstrip("/")
-    api_key = body.get("api_key", "")
+    api_key_raw = body.get("api_key", "")
+    api_key = _resolve_api_key(api_key_raw)
     protocol = (body.get("protocol") or "openai").lower()
-    if not base_url or not api_key:
-        return jsonify({"ok": False, "error": "base_url 和 api_key 必填"}), 400
+    if not base_url:
+        return jsonify({"ok": False, "error": "base_url 必填"}), 400
+    if not api_key:
+        hint = "（api_key 为 env: 引用但环境变量未设置）" if api_key_raw.startswith("env:") else ""
+        return jsonify({"ok": False, "error": f"api_key 无效{hint}"}), 400
     try:
         import requests as _req
-        # OpenAI 兼容：/v1/models（base_url 可能已含 /v1）
-        url = base_url.rstrip("/")
-        if not url.endswith("/v1/models") and not url.endswith("/models"):
-            url = url + ("/v1/models" if not url.endswith("/v1") else "/models")
+        # 统一拼接 /models：兼容 base_url 已含 /v1、/api/v3 或其他路径的情况
+        url = base_url
+        if not url.endswith("/models"):
+            url = url + "/models"
         headers = {"Authorization": f"Bearer {api_key}"}
         if protocol == "anthropic":
             headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01"}

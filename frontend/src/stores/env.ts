@@ -67,6 +67,28 @@ export const useEnvStore = defineStore('env', () => {
     ),
   )
   const proxyEnabled = computed(() => envData.proxy && envData.proxy.enable)
+  const envVars = ref<string[]>([])
+  const envVarsBusy = ref(false)
+
+  /** 拉取系统中可用的环境变量名（仅含 KEY/TOKEN/SECRET 关键字） */
+  async function fetchEnvVars(force = false) {
+    if (envVarsBusy.value) return
+    if (envVars.value.length && !force) return
+    envVarsBusy.value = true
+    try {
+      const r = await api<{ ok: boolean; names?: string[]; error?: string }>('/api/llm/env-vars')
+      if (r.ok && r.names) envVars.value = r.names
+    } catch { /* ignore */ } finally {
+      envVarsBusy.value = false
+    }
+  }
+
+  /** 将 api_key 字段设为 env:VAR_NAME 引用形式 */
+  function setApiKeyFromEnv(pn: string, proto: string, varName: string) {
+    if (!envData.llm?.[pn]?.[proto]) return
+    envData.llm[pn][proto].api_key = 'env:' + varName
+    ui.toast(`已引用环境变量 ${varName}`)
+  }
 
   function ensureSelectedProvider(prefer?: string) {
     const names = providerNames.value
@@ -139,7 +161,7 @@ export const useEnvStore = defineStore('env', () => {
   }
   function setActiveProvider(name: string) {
     envData.llm._active_provider = name
-    ui.toast('Active 设为: ' + name)
+    ui.toast('已设为默认 Provider: ' + name)
   }
   async function addProtocol(pn: string) {
     const proto = await ui.askPrompt({
@@ -216,12 +238,12 @@ export const useEnvStore = defineStore('env', () => {
       if (!silent) ui.toast('请先填 base_url 和 api_key', 'warn')
       return false
     }
-    if (!silent) ui.toast('验证中...', 'ok')
+    if (!silent) ui.toast('获取模型中...', 'ok')
     const r = await api<{ ok: boolean; models?: string[]; error?: string }>('/api/llm/verify', {
       method: 'POST', body: JSON.stringify({ base_url: cfg.base_url, api_key: cfg.api_key, protocol: proto }),
     })
     if (r.ok) {
-      if (!silent) ui.toast(`验证成功，${r.models?.length || 0} 个模型可用`)
+      if (!silent) ui.toast(`获取成功，${r.models?.length || 0} 个模型可用`)
       if (r.models && r.models.length) {
         const newModels: any = {}
         for (const m of r.models) newModels[m] = { name: m }
@@ -229,7 +251,7 @@ export const useEnvStore = defineStore('env', () => {
       }
       return true
     }
-    if (!silent) ui.toast('验证失败: ' + r.error, 'err')
+    if (!silent) ui.toast('获取失败: ' + r.error, 'err')
     return false
   }
 
@@ -507,6 +529,7 @@ export const useEnvStore = defineStore('env', () => {
   return {
     envData, envDataText, selectedProvider, providerNames, proxyEnabled,
     smartFlow, smartPicker, smartBusy,
+    envVars, envVarsBusy, fetchEnvVars, setApiKeyFromEnv,
     loadEnv, selectProvider, updateEnvDataSection, addProvider, deleteProvider, setActiveProvider,
     addProtocol, deleteProtocol, addModel, deleteModel, renameModel, saveEnv,
     generateProxyConfig, startProxyServer, verifyLlm, addSmartProvider,
