@@ -1468,6 +1468,96 @@ def toggle_skill_enabled(name):
     })
 
 
+@app.route("/api/skills/import", methods=["POST"])
+def import_skills():
+    """批量导入技能启用清单。
+
+    Body: { names: [str], mode: "merge"|"overwrite", ides: ["Claude", ...] }
+    语义：
+      - 仅写入 skill.yaml 的 enabled 清单（不安装/卸载）
+      - mode=merge: 追加；mode=overwrite: 清空后追加
+      - 未安装的技能名会被跳过并记入 not_installed
+      - 完成后自动同步到指定 IDE（scope=skill）
+    """
+    body = request.get_json(silent=True) or {}
+    names = body.get("names") or []
+    mode = str(body.get("mode") or "merge")
+    ides = body.get("ides") or []
+    if not isinstance(names, list):
+        return jsonify({"ok": False, "error": "names 必须为数组"}), 400
+    if not isinstance(ides, list):
+        ides = []
+    allowed_ides = {"Agents", "Claude", "Codex", "Cursor", "IDEA", "OpenClaw",
+                    "OpenCode", "Qoder", "QoderCN", "Trae", "TraeCN", "TraeSoloCN", "WorkBuddy",
+                    "ZCode", "All"}
+    safe_ides = [i for i in ides if i in allowed_ides]
+
+    # 收集已安装技能名集合
+    installed = set()
+    for base in (DOT_AGENTS_SKILLS, PROJECT_SKILLS_DIR):
+        if not base.exists():
+            continue
+        for p in base.iterdir():
+            if p.is_dir():
+                installed.add(p.name)
+
+    # 清洗目标名称
+    target = [str(n).strip() for n in names if str(n).strip()]
+    added = []
+    skipped = []
+    not_installed = []
+    for name in target:
+        if name not in installed:
+            not_installed.append(name)
+            continue
+        added.append(name)
+
+    try:
+        from lib.skills import load_skill_yaml, save_skill_yaml
+        data = load_skill_yaml(SKILL_YAML)
+        cur = data.get("enabled", []) or []
+        if mode == "overwrite":
+            cur = []
+        cur_set = set(cur)
+        for name in added:
+            if name not in cur_set:
+                cur.append(name)
+                cur_set.add(name)
+            else:
+                skipped.append(name)
+        data["enabled"] = cur
+        save_skill_yaml(SKILL_YAML, data)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    # 同步到 IDE
+    sync_logs = []
+    if safe_ides:
+        ide_arg = "All" if "All" in safe_ides else ",".join(safe_ides)
+        try:
+            cmd = _script_run_cmd("agentctl", ["sync", "--ide", ide_arg, "--force", "--scope", "skill"])
+            result = subprocess.run(
+                cmd, cwd=str(PROJECT_ROOT),
+                capture_output=True, text=True,
+                encoding="utf-8", errors="ignore",
+                timeout=120,
+            )
+            sync_logs.append(result.stdout or "")
+            if result.returncode != 0:
+                sync_logs.append("[WARN] " + (result.stderr or ""))
+        except Exception as e:
+            sync_logs.append(f"[ERROR] sync 失败: {e}")
+
+    return jsonify({
+        "ok": True,
+        "added": len(added),
+        "skipped": len(skipped),
+        "not_installed": not_installed,
+        "synced_ides": safe_ides,
+        "sync_log": "\n".join(sync_logs).strip(),
+    })
+
+
 @app.route("/api/skills/search", methods=["GET"])
 def search_skills():
     """多源 Skills 市场聚合搜索。

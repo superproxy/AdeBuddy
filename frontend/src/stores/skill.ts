@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, reactive, computed } from 'vue'
+import * as yaml from 'js-yaml'
 import { api } from '../api/client'
 import { runSse } from '../api/sse'
 import { useUiStore } from './ui'
@@ -313,6 +314,157 @@ export const useSkillStore = defineStore('skill', () => {
     ui.toast(`已${enabled ? '启用' : '禁用'} ${targets.length} 个技能`)
   }
 
+  /** 批量切换指定名称的启用状态（基于勾选） */
+  async function toggleSkillList(names: string[], enabled: boolean) {
+    if (!names.length) { ui.toast('请先勾选技能', 'warn'); return }
+    const targets = installedSkills.value.filter((s) => names.includes(s.name) && s.enabled !== enabled)
+    if (!targets.length) { ui.toast('没有需要变更的技能', 'warn'); return }
+    targets.forEach((s) => (s.enabled = enabled))
+    for (const s of targets) {
+      try {
+        await api('/api/skills/' + encodeURIComponent(s.name) + '/toggle', {
+          method: 'POST', body: JSON.stringify({ enabled, ides: sync.syncTargetIdes }),
+        })
+      } catch { /* 忽略单个失败 */ }
+    }
+    ui.toast(`已${enabled ? '启用' : '禁用'} ${targets.length} 个技能`)
+  }
+
+  /** 批量卸载（基于勾选） */
+  async function deleteSkillList(names: string[]) {
+    if (!names.length) { ui.toast('请先勾选技能', 'warn'); return }
+    const ok = await ui.askConfirm({
+      title: `卸载 ${names.length} 个技能？`,
+      message: '将从本地技能目录移除，此操作不可撤销。',
+      detail: names.join(' · '),
+      confirmText: '确认卸载',
+      tone: 'danger',
+    })
+    if (!ok) return
+    let removed = 0
+    for (const name of names) {
+      try {
+        const r = await api<{ ok: boolean }>('/api/skills/' + encodeURIComponent(name), { method: 'DELETE' })
+        if (r.ok) removed++
+      } catch { /* 忽略单个失败 */ }
+    }
+    await loadInstalledSkills()
+    ui.toast(`已卸载 ${removed} 个技能`)
+  }
+
+  /** 导出技能清单 JSON：{ skills: { name: { enabled, path, author, repo, github_url } } }
+   *  - onlySelected: 仅导出选中项
+   *  - includeDisabled: 包含已禁用（默认 true，因为 skill 清单通常需完整导出）
+   */
+  function exportSkills(opts: { onlySelected?: string[]; includeDisabled?: boolean } = {}): string {
+    const onlySelected = opts.onlySelected && opts.onlySelected.length ? new Set(opts.onlySelected) : null
+    const includeDisabled = opts.includeDisabled !== false
+    const out: Record<string, any> = {}
+    for (const s of installedSkills.value) {
+      if (onlySelected && !onlySelected.has(s.name)) continue
+      if (!includeDisabled && !s.enabled) continue
+      const cfg: any = { enabled: s.enabled }
+      if (s.path) cfg.path = s.path
+      if (s.author) cfg.author = s.author
+      if (s.repo) cfg.repo = s.repo
+      if (s.github_url) cfg.github_url = s.github_url
+      if (s.source_type) cfg.source_type = s.source_type
+      out[s.name] = cfg
+    }
+    return JSON.stringify({ skills: out }, null, 2)
+  }
+
+  /** 导入技能清单：自动识别 JSON / YAML
+   *  支持格式：
+   *    { skills: { name: {...} } }   标准格式
+   *    { enabled: [name, ...] }      skill.yaml 原生格式（仅启用清单）
+   *    { name: {...} }               直接 key->cfg 结构
+   *  导入语义：
+   *    - 仅写入 skill.yaml 的启用清单（对 enabled:true 的名称调用 enable_skill）
+   *    - 不安装新技能，不卸载已存在技能
+   *    - mode=merge: 追加；mode=overwrite: 清空后追加
+   */
+  async function importSkills(text: string, mode: 'merge' | 'overwrite' = 'merge') {
+    const raw = text.trim()
+    if (!raw) { ui.toast('请输入或粘贴配置', 'warn'); return { ok: false, added: 0, skipped: 0 } }
+    let parsed: any = null
+    try { parsed = JSON.parse(raw) }
+    catch {
+      try { parsed = yaml.load(raw) }
+      catch (e: any) { ui.toast('解析失败（JSON/YAML 均无效）: ' + e.message, 'err'); return { ok: false, added: 0, skipped: 0 } }
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      ui.toast('配置格式不正确', 'err'); return { ok: false, added: 0, skipped: 0 }
+    }
+
+    // 提取目标启用的技能名集合
+    let enabledNames: string[] = []
+    let extraMeta: Record<string, any> = {}
+    if (Array.isArray(parsed.enabled)) {
+      // skill.yaml 原生格式：{ enabled: [name, ...] }
+      enabledNames = parsed.enabled.filter((n: any) => typeof n === 'string' && n)
+    } else if (parsed.skills && typeof parsed.skills === 'object') {
+      // 标准导出格式：{ skills: { name: { enabled, ... } } }
+      for (const [name, cfg] of Object.entries(parsed.skills)) {
+        const c: any = cfg
+        if (c && typeof c === 'object') {
+          if (c.enabled !== false) enabledNames.push(name)
+          if (c.author || c.repo || c.github_url || c.path) extraMeta[name] = c
+        }
+      }
+    } else {
+      // 直接 { name: {...} } 结构
+      for (const [name, cfg] of Object.entries(parsed)) {
+        const c: any = cfg
+        if (c && typeof c === 'object') {
+          if (c.enabled !== false) enabledNames.push(name)
+          if (c.author || c.repo || c.github_url || c.path) extraMeta[name] = c
+        }
+      }
+    }
+
+    if (!enabledNames.length) {
+      ui.toast('未发现任何可启用的技能条目', 'warn')
+      return { ok: false, added: 0, skipped: 0 }
+    }
+
+    // 已安装技能名集合（用于跳过未安装的）
+    const installed = new Set(installedSkills.value.map((s) => s.name))
+
+    const r = await api<{
+      ok: boolean
+      error?: string
+      added?: number
+      skipped?: number
+      not_installed?: string[]
+    }>('/api/skills/import', {
+      method: 'POST',
+      body: JSON.stringify({
+        names: enabledNames,
+        mode,
+        ides: sync.syncTargetIdes,
+      }),
+    })
+
+    if (r.ok) {
+      const added = r.added ?? 0
+      const skipped = r.skipped ?? 0
+      const notInstalled = r.not_installed ?? []
+      let msg = `已导入 ${added} 个`
+      if (skipped) msg += ` · 跳过 ${skipped} 个`
+      if (notInstalled.length) msg += ` · ${notInstalled.length} 个未安装已忽略`
+      ui.toast(msg)
+      await loadInstalledSkills()
+    } else {
+      ui.toast('导入失败: ' + (r.error || '未知错误'), 'err')
+    }
+    return {
+      ok: r.ok,
+      added: r.added ?? 0,
+      skipped: r.skipped ?? 0,
+    }
+  }
+
   return {
     localSkills, skillFilter, skillTab, skillSources, skillMarketSources,
     skillSearchQ, skillSearchResults, skillSearchHint, skillSearched, skillSearching, skillSearchMeta,
@@ -325,5 +477,6 @@ export const useSkillStore = defineStore('skill', () => {
     previewManualSource, clearManualPreview, toggleManualSkill, selectAllManualSkills, installSelectedManualSkills,
     loadInstalledSkills,
     viewSkillMd, uninstallSkill, syncToIde, onToggleSkill, toggleAllInstalled,
+    toggleSkillList, deleteSkillList, exportSkills, importSkills,
   }
 })

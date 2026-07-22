@@ -21,8 +21,89 @@ const {
   searchSkills, toggleSkillSource, installFromSearch,
   loadLocalSkills, loadInstalledSkills, viewSkillMd, uninstallSkill, syncToIde,
   onToggleSkill, toggleAllInstalled,
+  toggleSkillList, deleteSkillList, exportSkills, importSkills,
   previewManualSource, clearManualPreview, toggleManualSkill, selectAllManualSkills, installSelectedManualSkills,
 } = skill
+
+// ===== 导出弹层 =====
+const exportOpen = ref(false)
+const exportIncludeDisabled = ref(true)
+const exportOnlySelected = ref(false)
+const exportJson = computed(() =>
+  exportSkills({
+    onlySelected: exportOnlySelected.value ? selectedNames.value : undefined,
+    includeDisabled: exportIncludeDisabled.value,
+  }),
+)
+const exportCount = computed(() => {
+  const onlySelected = exportOnlySelected.value ? new Set(selectedNames.value) : null
+  return installedSkills.value.filter((s) => {
+    if (onlySelected && !onlySelected.has(s.name)) return false
+    if (!exportIncludeDisabled.value && !s.enabled) return false
+    return true
+  }).length
+})
+function openExport() {
+  exportIncludeDisabled.value = true
+  exportOnlySelected.value = selectedCount.value > 0
+  exportOpen.value = true
+}
+function closeExport() { exportOpen.value = false }
+async function copyExport() {
+  try {
+    await navigator.clipboard?.writeText(exportJson.value)
+    ui.toast('已复制到剪贴板')
+  } catch { /* fallback */ }
+}
+function downloadExport() {
+  const blob = new Blob([exportJson.value], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'skills.json'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+// ===== 导入弹层 =====
+const importOpen = ref(false)
+const importText = ref('')
+const importMode = ref<'merge' | 'overwrite'>('merge')
+const importDragOver = ref(false)
+const importFileInput = ref<HTMLInputElement | null>(null)
+function openImport() {
+  importText.value = ''
+  importMode.value = 'merge'
+  importOpen.value = true
+}
+function closeImport() { importOpen.value = false }
+function onImportFileClick() { importFileInput.value?.click() }
+function onImportFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) readImportFile(file)
+  input.value = ''
+}
+function onImportDrop(e: DragEvent) {
+  e.preventDefault()
+  importDragOver.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) readImportFile(file)
+}
+function readImportFile(file: File) {
+  const reader = new FileReader()
+  reader.onload = () => { importText.value = String(reader.result || '') }
+  reader.readAsText(file)
+}
+async function doImport() {
+  const r = await importSkills(importText.value, importMode.value)
+  if (r.ok) {
+    closeImport()
+    clearSelection()
+  }
+}
 
 const drawerOpen = ref(false)
 const marketInput = ref<HTMLInputElement | null>(null)
@@ -91,6 +172,42 @@ const sortedInstalled = computed(() => {
   })
   return list
 })
+
+// ===== 选中状态（已安装技能表） =====
+const selected = ref<Set<string>>(new Set())
+function toggleSelect(name: string) {
+  const s = new Set(selected.value)
+  if (s.has(name)) s.delete(name)
+  else s.add(name)
+  selected.value = s
+}
+const allFilteredSelected = computed(() =>
+  sortedInstalled.value.length > 0 && sortedInstalled.value.every((s) => selected.value.has(s.name)),
+)
+function toggleSelectAll() {
+  const s = new Set(selected.value)
+  if (allFilteredSelected.value) {
+    sortedInstalled.value.forEach((x) => s.delete(x.name))
+  } else {
+    sortedInstalled.value.forEach((x) => s.add(x.name))
+  }
+  selected.value = s
+}
+const selectedNames = computed(() => Array.from(selected.value))
+const selectedCount = computed(() => selected.value.size)
+function clearSelection() { selected.value = new Set() }
+async function batchEnable() {
+  await toggleSkillList(selectedNames.value, true)
+  clearSelection()
+}
+async function batchDisable() {
+  await toggleSkillList(selectedNames.value, false)
+  clearSelection()
+}
+async function batchUninstall() {
+  await deleteSkillList(selectedNames.value)
+  clearSelection()
+}
 
 const SUGGESTS = ['react', '设计', 'API', 'testing', 'docx']
 
@@ -380,24 +497,41 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           </div>
         </div>
         <div class="btn-cluster">
-          <div class="btn-pair" role="group" aria-label="批量启停">
-            <button type="button" class="btn btn-ghost btn-sm" @click="toggleAllInstalled(true)">
-              <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-              全选
-            </button>
-            <button type="button" class="btn btn-ghost btn-sm" @click="toggleAllInstalled(false)">
-              <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
-              全不选
-            </button>
-          </div>
+          <button type="button" class="btn btn-ghost btn-sm" @click="openImport">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            导入
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" @click="openExport" :disabled="!installedSkills.length">
+            <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            导出<span v-if="selectedCount" class="btn-badge">{{ selectedCount }}</span>
+          </button>
         </div>
       </div>
+
+      <Transition name="fade-slide">
+        <div v-if="selectedCount" class="batch-bar" role="toolbar" aria-label="批量操作">
+          <span class="batch-count">已选 {{ selectedCount }} 个</span>
+          <button type="button" class="btn btn-soft btn-sm" @click="batchEnable">启用</button>
+          <button type="button" class="btn btn-soft btn-sm" @click="batchDisable">禁用</button>
+          <button type="button" class="btn btn-danger-text btn-sm" @click="batchUninstall">卸载</button>
+          <span class="batch-split" />
+          <button type="button" class="btn btn-ghost btn-sm" @click="clearSelection">取消</button>
+        </div>
+      </Transition>
 
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th style="width:72px">启用</th>
+              <th style="width:40px">
+                <input
+                  type="checkbox"
+                  class="row-check"
+                  :checked="allFilteredSelected"
+                  :indeterminate.prop="selectedCount > 0 && !allFilteredSelected"
+                  @change="toggleSelectAll"
+                />
+              </th>
               <th class="sortable" :class="{ active: installedSortBy === 'name' }" @click="setInstalledSort('name')">
                 <span class="th-label">
                   技能
@@ -422,27 +556,23 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
                   <svg class="sort-ic" :class="{ desc: installedSortBy === 'path' && installedSortDir === 'desc' }" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
                 </span>
               </th>
-              <th class="sortable" style="width:90px" :class="{ active: installedSortBy === 'status' }" @click="setInstalledSort('status')">
-                <span class="th-label">
-                  状态
-                  <svg class="sort-ic" :class="{ desc: installedSortBy === 'status' && installedSortDir === 'desc' }" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-                </span>
-              </th>
-              <th style="width:148px">操作</th>
+              <th style="width:200px">操作</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="s in sortedInstalled" :key="s.name" :class="{ disabled: !s.enabled }">
+            <tr v-for="s in sortedInstalled" :key="s.name" :class="{ disabled: !s.enabled, selected: selected.has(s.name) }">
               <td>
-                <button
-                  type="button"
-                  class="switch"
-                  :class="{ on: s.enabled }"
-                  :aria-label="(s.enabled ? '禁用' : '启用') + ' ' + s.name"
-                  @click="onToggleSkill(s, !s.enabled)"
+                <input
+                  type="checkbox"
+                  class="row-check"
+                  :checked="selected.has(s.name)"
+                  @change="toggleSelect(s.name)"
                 />
               </td>
-              <td><div class="name">{{ s.name }}</div></td>
+              <td>
+                <div class="name">{{ s.name }}</div>
+                <span class="status" :class="s.enabled ? 'on' : 'off'"><i />{{ s.enabled ? '启用' : '禁用' }}</span>
+              </td>
               <td>
                 <span v-if="s.author" class="author" :title="s.author">{{ s.author }}</span>
                 <span v-else class="muted">—</span>
@@ -464,10 +594,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
               </td>
               <td><div class="cmd" :title="s.path">{{ s.path || '—' }}</div></td>
               <td>
-                <span class="status" :class="s.enabled ? 'on' : 'off'"><i />{{ s.enabled ? '启用' : '禁用' }}</span>
-              </td>
-              <td>
                 <div class="ops">
+                  <button
+                    type="button"
+                    class="switch"
+                    :class="{ on: s.enabled }"
+                    :aria-label="(s.enabled ? '禁用' : '启用') + ' ' + s.name"
+                    @click="onToggleSkill(s, !s.enabled)"
+                  />
                   <button type="button" class="btn btn-soft btn-sm" @click="viewSkillMd(s.name)">
                     <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
                     查看
@@ -479,7 +613,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
               </td>
             </tr>
             <tr v-if="!sortedInstalled.length">
-              <td colspan="7" class="empty-cell">
+              <td colspan="6" class="empty-cell">
                 {{ installedSkills.length ? '无匹配结果' : '暂无已安装技能，点击「添加技能」开始' }}
               </td>
             </tr>
@@ -498,6 +632,158 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         打开添加面板
       </button>
     </div>
+
+    <!-- 导出弹层 -->
+    <Teleport to="body">
+      <Transition name="skill-export">
+        <div v-if="exportOpen" class="export-root" @click.self="closeExport">
+          <div class="export-panel" role="dialog" aria-modal="true" aria-labelledby="skill-export-title">
+            <header class="export-head">
+              <h3 id="skill-export-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                导出技能清单
+              </h3>
+              <button type="button" class="btn btn-icon btn-ghost" aria-label="关闭" @click="closeExport">
+                <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
+            </header>
+
+            <div class="export-body">
+              <div class="export-meta">
+                <span>将导出 <strong>{{ exportCount }}</strong> 个技能（启用清单 + 元信息）</span>
+              </div>
+
+              <label v-if="selectedCount" class="export-opt">
+                <input type="checkbox" v-model="exportOnlySelected" />
+                <span>仅导出已选中（{{ selectedCount }} 个）</span>
+              </label>
+
+              <label class="export-opt">
+                <input type="checkbox" v-model="exportIncludeDisabled" />
+                <span>包含已禁用的技能</span>
+              </label>
+
+              <pre class="export-json">{{ exportJson }}</pre>
+
+              <p class="export-tip">
+                导出的清单仅包含启用状态与元信息；导入方需自行安装技能本体，再通过「导入」恢复启用清单。
+              </p>
+            </div>
+
+            <footer class="export-foot">
+              <button type="button" class="btn btn-ghost" @click="closeExport">取消</button>
+              <button type="button" class="btn btn-secondary" @click="copyExport">
+                <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                复制
+              </button>
+              <button type="button" class="btn btn-primary" @click="downloadExport">
+                <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                下载 skills.json
+              </button>
+            </footer>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- 导入弹层 -->
+    <Teleport to="body">
+      <Transition name="skill-export">
+        <div v-if="importOpen" class="export-root" @click.self="closeImport">
+          <div class="export-panel" role="dialog" aria-modal="true" aria-labelledby="skill-import-title">
+            <header class="export-head">
+              <h3 id="skill-import-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                导入技能清单
+              </h3>
+              <button type="button" class="btn btn-icon btn-ghost" aria-label="关闭" @click="closeImport">
+                <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              </button>
+            </header>
+
+            <div class="export-body">
+              <div class="import-dropzone"
+                :class="{ over: importDragOver }"
+                @dragover.prevent="importDragOver = true"
+                @dragleave.prevent="importDragOver = false"
+                @drop="onImportDrop"
+                @click="onImportFileClick"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <div class="dz-text">
+                  <b>点击选择文件</b> 或拖拽到此处
+                  <div class="dz-formats">支持 .json / .yaml / .yml</div>
+                </div>
+                <input
+                  ref="importFileInput"
+                  type="file"
+                  accept=".json,.yaml,.yml,application/json,text/yaml"
+                  style="display:none"
+                  @change="onImportFileChange"
+                />
+              </div>
+
+              <div class="import-or">或粘贴配置文本</div>
+
+              <textarea
+                v-model="importText"
+                class="import-textarea"
+                rows="10"
+                placeholder='{ "skills": { "my-skill": { "enabled": true } } } 或 { "enabled": ["name1", "name2"] }'
+                spellcheck="false"
+              />
+
+              <div class="import-mode-row" role="radiogroup" aria-label="导入模式">
+                <button
+                  type="button"
+                  class="seg-btn"
+                  :class="{ on: importMode === 'merge' }"
+                  role="radio"
+                  :aria-checked="importMode === 'merge'"
+                  @click="importMode = 'merge'"
+                >
+                  合并（追加到现有清单）
+                </button>
+                <button
+                  type="button"
+                  class="seg-btn"
+                  :class="{ on: importMode === 'overwrite' }"
+                  role="radio"
+                  :aria-checked="importMode === 'overwrite'"
+                  @click="importMode = 'overwrite'"
+                >
+                  覆盖（清空后导入）
+                </button>
+              </div>
+
+              <p class="export-tip">
+                自动识别 JSON 和 YAML；支持 <code>{ skills: {...} }</code>、<code>{ enabled: [...] }</code> 或直接 <code>{ name: {...} }</code>。未安装的技能会被跳过。
+              </p>
+            </div>
+
+            <footer class="export-foot">
+              <button type="button" class="btn btn-ghost" @click="closeImport">取消</button>
+              <button type="button" class="btn btn-primary" :disabled="!importText.trim()" @click="doImport">
+                <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                导入
+              </button>
+            </footer>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 
     <Teleport to="body">
       <Transition name="skill-studio">
@@ -993,6 +1279,178 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   padding: 14px 18px; border-bottom: 1px solid var(--border-base); align-items: center;
 }
 .toolbar-left { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.toolbar-right { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+/* 批量操作条 */
+.batch-bar {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px 4px 12px;
+  background: var(--primary-container);
+  border: 1px solid var(--primary-container-strong, rgba(22, 93, 255, 0.2));
+  border-radius: 8px;
+  font-size: 12px;
+  margin: 10px 18px 0;
+}
+.batch-count { font-weight: 600; color: var(--primary-hover); margin-right: 4px; font-variant-numeric: tabular-nums; }
+.batch-split { width: 1px; height: 16px; background: var(--border-base); margin: 0 4px; }
+.btn-danger-text { color: var(--text-secondary); }
+.btn-danger-text:hover:not(:disabled) { background: var(--red-bg, #ffece8); color: var(--red, #f53f3f); }
+
+/* 行复选框 */
+.row-check {
+  width: 15px; height: 15px;
+  cursor: pointer;
+  accent-color: var(--primary);
+  vertical-align: middle;
+}
+table tbody tr.selected { background: var(--primary-container); }
+table tbody tr.selected:hover { background: rgba(22, 93, 255, 0.12); }
+
+/* 按钮角标 */
+.btn-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 5px;
+  margin-left: 4px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 10px; font-weight: 700;
+  border-radius: 8px;
+  line-height: 1;
+}
+
+/* 过渡动画 */
+.fade-slide-enter-active, .fade-slide-leave-active { transition: all 0.18s ease; }
+.fade-slide-enter-from, .fade-slide-leave-to { opacity: 0; transform: translateY(-4px); }
+
+/* 导出/导入弹层 */
+.export-root {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  padding: 24px;
+}
+.export-panel {
+  width: min(640px, 100%); max-height: 88vh;
+  background: var(--bg-elevated);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.export-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 18px; border-bottom: 1px solid var(--border-base);
+}
+.export-head h3 {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0; font-size: 14px; font-weight: 600; color: var(--text-primary);
+}
+.export-head h3 svg { width: 18px; height: 18px; color: var(--primary); }
+.export-body {
+  padding: 16px 18px; overflow: auto; flex: 1;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.export-meta { font-size: 12px; color: var(--text-secondary); }
+.export-meta strong { color: var(--primary); font-variant-numeric: tabular-nums; }
+.export-opt {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-secondary);
+  cursor: pointer;
+}
+.export-opt input { accent-color: var(--primary); }
+.export-json {
+  margin: 0;
+  padding: 12px;
+  background: var(--bg-base);
+  border: 1px solid var(--border-base);
+  border-radius: 8px;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+  max-height: 240px; overflow: auto;
+  white-space: pre-wrap; word-break: break-all;
+}
+.export-tip {
+  margin: 0;
+  font-size: 11px; color: var(--text-tertiary);
+  line-height: 1.5;
+}
+.export-tip code {
+  padding: 1px 4px;
+  background: var(--bg-base);
+  border-radius: 3px;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 10px;
+}
+.export-foot {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 12px 18px; border-top: 1px solid var(--border-base);
+}
+.skill-export-enter-active, .skill-export-leave-active { transition: opacity 0.18s ease; }
+.skill-export-enter-from, .skill-export-leave-to { opacity: 0; }
+
+/* 导入弹层专属 */
+.import-dropzone {
+  display: flex; align-items: center; gap: 14px;
+  padding: 18px 20px;
+  border: 2px dashed var(--border-base);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.18s;
+  background: var(--bg-base);
+}
+.import-dropzone:hover { border-color: var(--primary); background: var(--primary-container); }
+.import-dropzone.over { border-color: var(--primary); background: var(--primary-container); transform: scale(1.01); }
+.import-dropzone svg { width: 28px; height: 28px; color: var(--text-tertiary); flex-shrink: 0; }
+.import-dropzone .dz-text { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+.import-dropzone .dz-text b { color: var(--primary); font-weight: 600; }
+.import-dropzone .dz-formats { font-size: 11px; color: var(--text-tertiary); margin-top: 2px; }
+.import-or {
+  text-align: center; font-size: 11px; color: var(--text-tertiary);
+  margin: 6px 0;
+  position: relative;
+}
+.import-or::before, .import-or::after {
+  content: ""; position: absolute; top: 50%;
+  width: calc(50% - 30px); height: 1px;
+  background: var(--border-base);
+}
+.import-or::before { left: 0; }
+.import-or::after { right: 0; }
+.import-textarea {
+  width: 100%;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-base);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  resize: vertical;
+  min-height: 140px;
+}
+.import-textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(22, 93, 255, 0.12); }
+.import-mode-row { display: flex; gap: 8px; }
+.seg-btn {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 12px; font-weight: 500;
+  text-align: center;
+  background: var(--bg-base);
+  border: 1px solid var(--border-base);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.seg-btn:hover { border-color: var(--primary); color: var(--primary); }
+.seg-btn.on {
+  background: var(--primary-container);
+  border-color: var(--primary);
+  color: var(--primary-hover);
+  font-weight: 600;
+}
+
 .search {
   display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px;
   border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-elevated); min-width: 220px;
