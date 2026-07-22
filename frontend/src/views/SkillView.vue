@@ -19,7 +19,7 @@ const {
 } = storeToRefs(skill)
 const {
   searchSkills, toggleSkillSource, installFromSearch,
-  loadLocalSkills, loadInstalledSkills, viewSkillMd, uninstallSkill, syncToIde,
+  loadLocalSkills, loadInstalledSkills, viewSkillMd, uninstallSkill,
   onToggleSkill, toggleAllInstalled,
   toggleSkillList, deleteSkillList, exportSkills, importSkills,
   previewManualSource, clearManualPreview, toggleManualSkill, selectAllManualSkills, installSelectedManualSkills,
@@ -457,7 +457,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
     <div class="skill-head flex flex-wrap items-start justify-between gap-4">
       <div class="min-w-0">
         <h1 class="text-[15px] font-semibold text-ink-900 m-0">技能配置</h1>
-        <p class="text-xs text-ink-500 mt-1 mb-0">集中管理 Agent Skills · 安装、启停与同步到 IDE</p>
+        <p class="text-xs text-ink-500 mt-1 mb-0">集中管理 Agent Skills · 安装、启停与同步</p>
       </div>
       <div class="btn-cluster">
         <button type="button" class="btn btn-secondary" @click="refreshInstalled">
@@ -468,11 +468,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
           添加技能
         </button>
-        <span class="split" aria-hidden="true" />
-        <button type="button" class="btn btn-primary" @click="syncToIde">
-          <svg viewBox="0 0 24 24"><path d="M12 2v10"/><path d="m8 8 4 4 4-4"/><path d="M4 14v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
-          同步到 IDE
-        </button>
       </div>
     </div>
 
@@ -480,7 +475,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <div class="kpi brand"><b>{{ installedSkills.length }}</b><span>已安装</span><em>.agents / config 并集</em></div>
       <div class="kpi live"><b>{{ enabledInstalledCount }}</b><span>启用中</span><em>写入 skill.yaml</em></div>
       <div class="kpi"><b>{{ localSkills.length }}</b><span>本地预置</span><em>三源合并</em></div>
-      <div class="kpi warn"><b>{{ disabledInstalledCount }}</b><span>已禁用</span><em>不会同步到 IDE</em></div>
+      <div class="kpi warn"><b>{{ disabledInstalledCount }}</b><span>已禁用</span><em>不会同步</em></div>
     </div>
 
     <section class="panel">
@@ -621,17 +616,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         </table>
       </div>
     </section>
-
-    <div class="keys-bar">
-      <div>
-        <h2>获取更多技能</h2>
-        <p>从市场检索、安装本地预置，或通过 GitHub 源手动安装。</p>
-      </div>
-      <button type="button" class="btn btn-soft" @click="openDrawer('market')">
-        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-        打开添加面板
-      </button>
-    </div>
 
     <!-- 导出弹层 -->
     <Teleport to="body">
@@ -1463,7 +1447,7 @@ table tbody tr.selected:hover { background: rgba(22, 93, 255, 0.12); }
 }
 .seg button.on { background: var(--bg-elevated); color: var(--primary-hover); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
 
-.table-wrap { max-height: min(560px, 62vh); overflow: auto; }
+.table-wrap { overflow: visible; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th {
   text-align: left; font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase;
@@ -1546,15 +1530,6 @@ tr:hover .ops { background: var(--bg-base); }
   width: 13px; height: 13px; flex-shrink: 0;
   fill: currentColor; stroke: none;
 }
-
-.keys-bar {
-  background: var(--bg-elevated); border-radius: 14px; padding: 16px 18px;
-  box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06);
-  border: 1px solid rgba(0,0,0,.03);
-  display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap;
-}
-.keys-bar h2 { margin: 0 0 2px; font-size: 14px; color: var(--text-primary); }
-.keys-bar p { margin: 0; font-size: 12px; color: var(--text-tertiary); }
 
 .drawer-root {
   position: fixed; inset: 0; z-index: 60;

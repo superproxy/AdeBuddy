@@ -316,14 +316,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
     <div class="mcp-head flex flex-wrap items-start justify-between gap-4">
       <div class="min-w-0">
         <h1 class="text-[15px] font-semibold text-ink-900 m-0">MCP 配置</h1>
-        <p class="text-xs text-ink-500 mt-1 mb-0">集中管理 MCP 服务 · 快速添加、编辑、同步与密钥设置</p>
+        <p class="text-xs text-ink-500 mt-1 mb-0">集中管理 MCP 服务 · 快速添加、编辑与同步</p>
   
       </div>
       <div class="btn-cluster">
-        <button type="button" class="btn btn-secondary" @click="gotoKeys">
-          <svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
-          密钥
-        </button>
         <button type="button" class="btn btn-secondary" @click="openImport">
           <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
           导入
@@ -1140,7 +1136,7 @@ table tbody tr.selected:hover { background: rgba(22, 93, 255, 0.12); }
 }
 .seg button.on { background: var(--bg-elevated); color: var(--primary-hover); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
 
-.table-wrap { max-height: min(560px, 62vh); overflow: auto; }
+.table-wrap { overflow: visible; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th {
   text-align: left; font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase;

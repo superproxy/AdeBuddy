@@ -2,9 +2,23 @@
 import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMarketplaceStore } from '../stores/marketplace'
+import { usePluginStore } from '../stores/plugin'
 
 const mkt = useMarketplaceStore()
 const { items, loading, searchQuery, installing, isMock } = storeToRefs(mkt)
+
+const pluginStore = usePluginStore()
+const { plugins, installingPlugin } = storeToRefs(pluginStore)
+const { refreshPluginList, onTogglePlugin, editPlugin, publishToMarketplace } = pluginStore
+
+// 热门推荐：本地未安装 + 综合能力分数（skills + mcp）前 4 个
+const featuredPlugins = computed(() => {
+  return plugins.value
+    .filter((p) => !p.installed)
+    .slice()
+    .sort((a, b) => ((b.skills_count || 0) + (b.mcp_count || 0)) - ((a.skills_count || 0) + (a.mcp_count || 0)))
+    .slice(0, 4)
+})
 
 type SortKey = 'new' | 'hot' | 'name'
 type ViewMode = 'grid' | 'list'
@@ -115,7 +129,10 @@ function applySuggest(tag: string) {
   toggleTag(tag)
 }
 
-onMounted(() => { mkt.browse() })
+onMounted(() => {
+  mkt.browse()
+  refreshPluginList()
+})
 </script>
 
 <template>
@@ -152,6 +169,44 @@ onMounted(() => { mkt.browse() })
         >{{ tag }}</button>
       </div>
     </header>
+
+    <!-- 热门推荐：本地未安装的精选插件 -->
+    <section v-if="featuredPlugins.length" class="mkt-featured">
+      <header class="mkt-featured-head">
+        <h2><span class="star" aria-hidden="true">★</span> 热门推荐</h2>
+        <span class="mkt-featured-count">{{ featuredPlugins.length }} 个</span>
+      </header>
+      <div class="mkt-featured-grid">
+        <article v-for="p in featuredPlugins" :key="p.file" class="mkt-featured-card">
+          <div class="mkt-featured-top">
+            <div class="mkt-featured-avatar" aria-hidden="true">{{ initials(p.name) }}</div>
+            <span class="mkt-featured-tag">推荐</span>
+          </div>
+          <div class="mkt-featured-body">
+            <h3>{{ p.name }}<span class="mkt-ver">v{{ p.version }}</span></h3>
+            <p class="mkt-featured-desc" :title="p.description">{{ p.description || '暂无描述' }}</p>
+          </div>
+          <div class="mkt-featured-meta">
+            <span class="mkt-chip brand">{{ p.skills_count }} skills</span>
+            <span class="mkt-chip">{{ p.mcp_count }} mcp</span>
+          </div>
+          <div class="mkt-featured-foot">
+            <button
+              type="button"
+              class="mkt-btn mkt-btn-primary"
+              :disabled="!!installingPlugin"
+              @click="onTogglePlugin(p, true)"
+            >
+              {{ installingPlugin === p.name || installingPlugin === p.file ? '安装中…' : '安装' }}
+            </button>
+            <div class="mkt-featured-ops">
+              <button type="button" class="mkt-btn mkt-btn-ghost" @click="editPlugin(p.file)">编辑</button>
+              <button type="button" class="mkt-btn mkt-btn-ghost" title="发布到本地市场" @click="publishToMarketplace(p.file)">分享</button>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
 
     <div class="mkt-workspace">
       <div class="mkt-main">
@@ -338,6 +393,66 @@ onMounted(() => { mkt.browse() })
   flex-direction: column;
   gap: 16px;
 }
+
+/* 热门推荐 */
+.mkt-featured {
+  background: var(--bg-elevated, #fff);
+  border: 1px solid #e5e6eb;
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06);
+}
+.mkt-featured-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; }
+.mkt-featured-head h2 {
+  margin: 0; font-size: 15px; font-weight: 700; color: #1f2329;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.mkt-featured-head .star { color: #ff7d00; font-size: 15px; }
+.mkt-featured-count { font-size: 12px; color: #86909c; font-weight: 500; font-variant-numeric: tabular-nums; }
+.mkt-featured-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.mkt-featured-card {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 14px;
+  border: 1px solid #d9e6ff; background: linear-gradient(180deg, #eef4ff 0%, #fff 32%) #fff;
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+.mkt-featured-card:hover { border-color: #165dff; box-shadow: 0 4px 16px rgba(22, 93, 255, .08); }
+.mkt-featured-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.mkt-featured-avatar {
+  width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+  background: #165dff; color: #fff; font-weight: 750; font-size: 13px;
+}
+.mkt-featured-tag {
+  font-size: 10.5px; font-weight: 700; padding: 3px 8px; border-radius: 999px;
+  background: #165dff; color: #fff; letter-spacing: .02em;
+}
+.mkt-featured-body h3 { margin: 0; font-size: 14px; font-weight: 700; color: #1f2329; }
+.mkt-ver { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 11px; color: #86909c; margin-left: 6px; font-weight: 500; }
+.mkt-featured-desc {
+  margin: 4px 0 0; font-size: 12.5px; color: #86909c; line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; min-height: 2.9em;
+}
+.mkt-featured-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.mkt-chip { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px; background: #f7f8fa; color: #4e5969; }
+.mkt-chip.brand { background: #eef4ff; color: #165dff; }
+.mkt-featured-foot {
+  margin-top: auto; display: flex; justify-content: space-between; align-items: center; gap: 6px;
+  padding-top: 10px; border-top: 1px solid #f7f8fa; flex-wrap: wrap;
+}
+.mkt-featured-ops { display: flex; gap: 2px; flex-wrap: wrap; align-items: center; }
+.mkt-btn {
+  height: 28px; padding: 0 10px; border-radius: 7px; font-size: 11px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  white-space: nowrap; border: 1px solid transparent; cursor: pointer; transition: background .18s ease;
+}
+.mkt-btn:disabled { opacity: .45; cursor: not-allowed; }
+.mkt-btn-primary { background: #165dff; color: #fff; }
+.mkt-btn-primary:hover:not(:disabled) { background: #0e42d2; }
+.mkt-btn-ghost { background: transparent; color: #4e5969; }
+.mkt-btn-ghost:hover:not(:disabled) { background: #f7f8fa; color: #1f2329; }
+@media (max-width: 1100px) { .mkt-featured-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 820px) { .mkt-featured-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 540px) { .mkt-featured-grid { grid-template-columns: 1fr; } }
 
 .mkt-hero {
   text-align: center;
