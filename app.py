@@ -376,10 +376,12 @@ class _DownloadApi:
         if _sys.platform == "darwin":
             ext = "." + filename.rsplit(".", 1)[-1] if "." in filename else ".zip"
             prompt = f"选择保存位置（{filename}）"
-            # AppleScript choose file name 弹保存对话框
+            # AppleScript choose file name 弹保存对话框，直接返回 POSIX 路径
+            # （避免解析 HFS 路径；不同 macOS 版本返回格式有差异，POSIX path 统一）
             script = (
                 f'set theFile to choose file name with prompt "{prompt}" '
-                f'default name "{filename}"'
+                f'default name "{filename}"\n'
+                f'return POSIX path of theFile'
             )
             try:
                 r = _sp.run(
@@ -485,39 +487,42 @@ class _DownloadApi:
 def _osascript_to_posix(raw: str) -> str:
     """将 osascript choose file name 的返回值转为 POSIX 路径。
 
-    返回格式可能为：
-      alias "Macintosh HD:Users:foo:bar.zip"
-      file "Macintosh HD:Users:foo:bar.zip"
+    返回格式可能为（不同 macOS 版本有差异）：
+      alias "Macintosh HD:Users:foo:bar.zip"        （旧版，带引号）
+      file Macintosh HD:Users:foo:bar.zip            （新版，无引号）
       POSIX file "/Users/foo/bar.zip"
+      /Users/foo/bar.zip                             （由 return POSIX path 产生）
     """
     import os as _os
     raw = raw.strip()
 
+    # 直接是 POSIX 路径（由 return POSIX path of theFile 产生）
+    if raw.startswith("/"):
+        return raw
+
     # POSIX file "/path/to/file"
     if raw.startswith("POSIX file"):
-        # 提取引号中的路径
         start = raw.find('"')
         end = raw.rfind('"')
         if start >= 0 and end > start:
             return raw[start + 1:end]
 
-    # alias "Macintosh HD:Users:..." 或 file "Macintosh HD:Users:..."
-    start = raw.find('"')
-    end = raw.rfind('"')
-    if start >= 0 and end > start:
-        hfs_path = raw[start + 1:end]
-        # HFS 路径用 : 分隔，第一段是卷名
-        parts = hfs_path.split(":")
-        if len(parts) >= 2:
-            # Macintosh HD:Users:foo:bar.zip → /Users/foo/bar.zip
-            # 去掉卷名，前面加 /
-            posix = "/" + "/".join(parts[1:])
-            # 验证路径是否存在其父目录
-            return posix
-
-    # 直接是 POSIX 路径
-    if raw.startswith("/"):
-        return raw
+    # alias "HD:..." 或 file "HD:..." 或 alias HD:... 或 file HD:...（无引号）
+    for prefix in ("alias", "file"):
+        if raw.startswith(prefix):
+            rest = raw[len(prefix):].strip()
+            # 去掉可能存在的引号
+            if rest.startswith('"') and rest.endswith('"') and len(rest) >= 2:
+                hfs_path = rest[1:-1]
+            else:
+                hfs_path = rest
+            parts = hfs_path.split(":")
+            if len(parts) >= 2:
+                # Macintosh HD:Users:foo:bar.zip → /Users/foo/bar.zip
+                # 去掉卷名（第一段），前面加 /；过滤尾部空段（HFS 尾部冒号）
+                posix_parts = [p for p in parts[1:] if p != ""]
+                return "/" + "/".join(posix_parts)
+            break
 
     return ""
 
