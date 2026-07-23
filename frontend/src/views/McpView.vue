@@ -316,7 +316,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
     <div class="mcp-head flex flex-wrap items-start justify-between gap-4">
       <div class="min-w-0">
         <h1 class="text-[15px] font-semibold text-ink-900 m-0">MCP 配置</h1>
-        <p class="text-xs text-ink-500 mt-1 mb-0">集中管理 MCP 服务 · 快速添加、编辑与同步</p>
+        <p class="text-xs text-ink-500 mt-1 mb-0">集中管理 MCP 服务 · 支持 stdio / SSE / HTTP 三种传输 · 一键同步到 IDE 的 mcp.json</p>
   
       </div>
       <div class="btn-cluster">

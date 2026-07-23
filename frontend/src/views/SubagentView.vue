@@ -183,7 +183,7 @@ onUnmounted(() => {
           <span class="w-[3px] h-4 bg-brand-500 rounded-sm"></span>
           Subagent 角色
           <span class="text-[10px] text-ink-500 font-normal">
-            subagent.yaml · {{ subagentData.subagents.length }} 个
+            定义角色与工具权限 · {{ subagentData.subagents.length }} 个
           </span>
         </h2>
         <div class="flex gap-2 flex-wrap">

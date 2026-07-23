@@ -128,8 +128,7 @@ function clearEnvRef() {
       <div>
         <h1 class="text-[22px] font-bold tracking-tight text-ink-900 m-0 mb-1">LLM Providers</h1>
         <p class="m-0 text-[13px] text-ink-500">
-          Master–Detail · 左侧选厂商，右侧编辑协议与模型 ·
-          <span class="font-mono text-[12px]">llm.yaml</span>
+          管理 LLM 厂商与模型清单 · 左侧选厂商，右侧编辑协议与模型 · 支持 OpenAI / Anthropic / Gemini 等多协议 · 同步至 IDE 作为默认模型源
         </p>
       </div>
       <div class="flex gap-2 flex-wrap">

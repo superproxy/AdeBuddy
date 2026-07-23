@@ -168,6 +168,8 @@ HOOKS_EXAMPLE = HOOKS_TEMPLATE_DIR / "hooks.json"
 MARKETPLACE_DIR = PROJECT_ROOT / "config" / "marketplace"
 MARKETPLACE_PACKAGES_DIR = MARKETPLACE_DIR / "packages"
 MARKETPLACE_INDEX = MARKETPLACE_DIR / "index.json"
+# UI 状态持久化文件（替代 localStorage，避免浏览器/webview 重启丢失）
+UI_STATE_FILE = PROJECT_ROOT / "config" / "ui" / "ui-state.json"
 
 # env.yaml 中属于 llm.yaml 的顶层键（其余归 mcp.yaml 的只有 mcp）
 LLM_TOP_KEYS = ["llm", "embedding", "tts", "asr", "vision", "misc"]
@@ -206,6 +208,7 @@ def _ensure_config_dirs() -> None:
         PROJECT_ROOT / "config" / "marketplace",
         PROJECT_ROOT / "config" / "marketplace" / "packages",
         PROJECT_ROOT / "config" / "proxy",
+        PROJECT_ROOT / "config" / "ui",
         # 技能安装目录（项目级 .agents/skills/）
         PROJECT_ROOT / ".agents" / "skills",
     ]
@@ -452,6 +455,56 @@ def dist_assets(filename):
     """Vite 构建产物（JS/CSS chunk）。"""
     from flask import send_from_directory
     return send_from_directory(PROJECT_ROOT / "tools" / "dist-ui" / "assets", filename)
+
+
+# ============================================================
+# UI 状态持久化 API（替代 localStorage，浏览器/webview 重启不丢失）
+# ============================================================
+def _load_ui_state() -> dict:
+    """读取 UI 状态文件；不存在或损坏时返回空 dict。"""
+    if not UI_STATE_FILE.exists():
+        return {}
+    try:
+        with open(UI_STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_ui_state(data: dict) -> None:
+    """原子写入 UI 状态文件。"""
+    UI_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = UI_STATE_FILE.with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp, UI_STATE_FILE)
+
+
+@app.route("/api/ui-state", methods=["GET"])
+def api_ui_state_get():
+    """读取全部 UI 状态。"""
+    return jsonify(_load_ui_state())
+
+
+@app.route("/api/ui-state", methods=["POST"])
+def api_ui_state_set():
+    """合并写入 UI 状态。请求体作为 patch 合并到现有状态。
+
+    客户端可一次提交多个键值对，如：
+        { "ideSyncTargets": ["Codex","TraeCN"], "autoSync": true }
+    """
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "请求体必须是 JSON 对象"}), 400
+    state = _load_ui_state()
+    state.update(body)
+    try:
+        _save_ui_state(state)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": True, "state": state})
 
 
 @app.route("/api/version", methods=["GET"])

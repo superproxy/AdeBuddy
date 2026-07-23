@@ -185,7 +185,7 @@ onUnmounted(() => {
           </div>
           <div class="title-block">
             <h1>Rules 管理</h1>
-            <p>定义 Agent 行为边界 · 同步到多 IDE</p>
+            <p>定义 Agent 行为边界与规范 · 多种规则类型 · 一键同步到支持的 IDE</p>
           </div>
         </div>
         <div class="header-actions">

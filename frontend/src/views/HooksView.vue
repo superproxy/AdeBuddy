@@ -142,7 +142,7 @@ onMounted(() => { loadHooks() })
           Hooks 配置
         </h2>
         <p class="m-0 mt-1 text-xs text-ink-500 max-w-[42ch]">
-          按会话生命周期挂载脚本：选中左侧节点，在右侧编辑匹配规则与命令。
+          按会话生命周期挂载脚本（PreToolUse / PostToolUse / UserPromptSubmit 等）· 左侧选节点，右侧编辑规则与命令
         </p>
         <div class="flex items-center gap-2 mt-2.5 flex-wrap">
           <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-brand-50 text-brand-600">

@@ -87,7 +87,7 @@ onMounted(() => { loadCmd() })
     <div class="cmd-head">
       <div class="min-w-0">
         <h1>自定义命令</h1>
-        <p class="sub">cmd.yaml · 斜杠命令折叠浏览，展开后编辑 Prompt</p>
+        <p class="sub">管理斜杠命令 · 折叠浏览、展开编辑 Prompt · 同步到支持的 IDE</p>
       </div>
       <div class="actions">
         <button type="button" class="btn btn-soft" @click="onAdd">

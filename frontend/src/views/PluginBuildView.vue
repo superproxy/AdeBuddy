@@ -40,7 +40,7 @@ const {
 const { loadLocalSkills } = skill
 const { refreshPluginList } = plugin
 
-const activeCat = ref<CatKey>('llm')
+const activeCat = ref<CatKey>('key')
 const listFilter = ref('')
 const nameTouched = ref(false)
 
@@ -193,10 +193,10 @@ const filteredKeys = computed(() => {
 })
 
 const packSections = computed(() => [
+  { key: 'key' as CatKey, label: 'Keys', items: selectedKeys.value.map(id => ({ id, label: id })) },
   { key: 'llm' as CatKey, label: 'LLM', items: selectedLlm.value.map(id => ({ id, label: id.split('@')[0] || id })) },
   { key: 'mcp' as CatKey, label: 'MCP', items: selectedMcp.value.map(id => ({ id, label: id })) },
   { key: 'skill' as CatKey, label: 'Skill', items: selectedSkills.value.map(id => ({ id, label: id })) },
-  { key: 'key' as CatKey, label: 'Keys', items: selectedKeys.value.map(id => ({ id, label: id })) },
   { key: 'agent' as CatKey, label: 'Agent', items: selectedSubagents.value.map(id => ({ id, label: id })) },
   { key: 'rule' as CatKey, label: 'Rules', items: selectedRules.value.map(id => ({ id, label: id.split(/[/\\]/).pop() || id })) },
   { key: 'cmd' as CatKey, label: 'Cmd', items: selectedCommands.value.map(id => ({ id, label: id })) },
@@ -317,7 +317,7 @@ onMounted(() => {
     <div class="pb-head">
       <div>
         <h1 class="pb-title">插件构建</h1>
-        <p class="pb-sub">按类型浏览本地组件，勾选后写入右侧装箱清单，核对后命名打包</p>
+        <p class="pb-sub">按类型浏览本地组件 · 勾选写入装箱清单 · 核对后命名打包为可分发的插件 zip</p>
       </div>
       <div class="pb-actions">
         <select
@@ -376,6 +376,7 @@ onMounted(() => {
         </button>
       </div>
       <div class="pb-chips" aria-live="polite">
+        <span class="pb-chip" :class="{ has: counts.key }" :title="counts.key ? `已选 ${counts.key} 个密钥` : '未选密钥'">Keys {{ counts.key || '未' }}</span>
         <span class="pb-chip" :class="{ has: counts.llm }">LLM {{ counts.llm }}</span>
         <span class="pb-chip" :class="{ has: counts.mcp }">MCP {{ counts.mcp }}</span>
         <span class="pb-chip" :class="{ has: counts.skill }">Skill {{ counts.skill }}</span>
@@ -402,7 +403,7 @@ onMounted(() => {
         <div class="pb-rail-label">类型</div>
         <nav class="pb-rail-nav">
           <button
-            v-for="key in (['llm','mcp','skill','key','agent','rule','cmd'] as CatKey[])"
+            v-for="key in (['key','llm','mcp','skill','agent','rule','cmd'] as CatKey[])"
             :key="key"
             type="button"
             class="pb-cat"

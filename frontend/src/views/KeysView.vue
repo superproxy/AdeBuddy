@@ -281,9 +281,7 @@ async function confirmImport() {
       <div class="head-text">
         <h1>密钥 / 环境变量</h1>
         <p class="text-xs mt-1 mb-0">
-          集中管理 MCP / LLM 配置中引用的密钥与环境变量。生成 mcp.json / IDE 配置时，作为
-          <code v-pre>${KEY}</code> 占位符的 fallback。
-          <span class="text-ink-400">优先取 OS 环境变量，其次取此处，最后用 <code v-pre>${VAR:-default}</code> 默认值。</span>
+          集中管理配置中引用的密钥与环境变量 · 优先取系统环境变量，其次取此处，最后用默认值
         </p>
       </div>
     </header>

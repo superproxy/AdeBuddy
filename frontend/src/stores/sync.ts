@@ -1,14 +1,18 @@
 /**
  * 同步状态 store —— 从 config_ui.html L1168-1248 迁移。
  *
- * 含：顶部"同步到 IDE"栏的 ideList（可拖拽排序，localStorage 持久化）、
+ * 含：顶部"同步到 IDE"栏的 ideList（可拖拽排序）、
  * syncTargetIdes（勾选的目标 IDE）、autoSync 开关、syncScopes（同步范围）、
  * syncing 状态。
  *
  * ideList 的 key 与后端 IDE_REGISTRY 完全对齐（驼峰，如 TraeCN/TraeSoloCN）。
+ *
+ * 持久化：写入后端 config/ui/ui-state.json（通过 /api/ui-state），
+ * 不再依赖 localStorage，避免浏览器/webview 重启丢失。
  */
 import { defineStore } from 'pinia'
 import { ref, reactive, watch } from 'vue'
+import { api } from '../api/client'
 
 export interface IdeItem {
   key: string
@@ -16,9 +20,10 @@ export interface IdeItem {
   desc: string
 }
 
-const IDE_ORDER_KEY = 'myagent.ideOrder'
-const IDE_SYNC_TARGET_KEY = 'myagent.ideSyncTargets'
-const IDE_AUTOSYNC_KEY = 'myagent.autoSync'
+// 旧 localStorage 键名（仅用于一次性迁移到后端）
+const LEGACY_LS_ORDER = 'myagent.ideOrder'
+const LEGACY_LS_TARGETS = 'myagent.ideSyncTargets'
+const LEGACY_LS_AUTOSYNC = 'myagent.autoSync'
 
 // 默认 IDE 列表（与 config_ui.html L1168-1183 一致，key 已对齐后端）
 const DEFAULT_IDE_LIST: IdeItem[] = [
@@ -39,70 +44,89 @@ const DEFAULT_IDE_LIST: IdeItem[] = [
   { key: 'Hermes', label: 'Hermes', desc: '.ade-hermes/rules + mcp' },
 ]
 
+/** 从旧 localStorage 读一次（用于首次迁移到后端） */
+function readLegacyLs(): {
+  ideOrder?: string[]
+  ideSyncTargets?: string[]
+  autoSync?: boolean
+} {
+  try {
+    const order = JSON.parse(localStorage.getItem(LEGACY_LS_ORDER) || 'null')
+    const targets = JSON.parse(localStorage.getItem(LEGACY_LS_TARGETS) || 'null')
+    const auto = localStorage.getItem(LEGACY_LS_AUTOSYNC) === '1'
+    return {
+      ideOrder: Array.isArray(order) ? order : undefined,
+      ideSyncTargets: Array.isArray(targets) ? targets : undefined,
+      autoSync: auto || undefined,
+    }
+  } catch {
+    return {}
+  }
+}
+
+/** 清空旧 localStorage（迁移成功后调用，避免后续继续读旧值） */
+function clearLegacyLs() {
+  try {
+    localStorage.removeItem(LEGACY_LS_ORDER)
+    localStorage.removeItem(LEGACY_LS_TARGETS)
+    localStorage.removeItem(LEGACY_LS_AUTOSYNC)
+  } catch {
+    /* ignore */
+  }
+}
+
 export const useSyncStore = defineStore('sync', () => {
   const ideList = ref<IdeItem[]>(DEFAULT_IDE_LIST.map((i) => ({ ...i })))
   const dragIdeKey = ref('')
   const dragOverIdeKey = ref('')
   const syncScopes = reactive({ llm: true, mcp: true, skill: true, rules: true })
 
-  // 同步目标 IDE（从 localStorage 恢复，默认 Codex）
-  const savedTargets = (() => {
-    try {
-      return JSON.parse(localStorage.getItem(IDE_SYNC_TARGET_KEY) || 'null')
-    } catch {
-      return null
-    }
-  })()
-  const syncTargetIdes = ref<string[]>(Array.isArray(savedTargets) ? savedTargets : ['Codex'])
-
+  // 默认不选中任何 IDE，由用户显式勾选后记忆
+  const syncTargetIdes = ref<string[]>([])
   const syncing = ref(false)
-  const autoSync = ref(localStorage.getItem(IDE_AUTOSYNC_KEY) === '1')
+  const autoSync = ref(false)
+
+  // 是否已完成首次加载；加载完成前 watch 不回写后端，避免覆盖
+  const loaded = ref(false)
+  // 回写防抖 timer
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** 合并写入后端 UI 状态（防抖 200ms） */
+  function persist(patch: Record<string, unknown>) {
+    if (!loaded.value) return
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      api<{ ok: boolean }>('/api/ui-state', {
+        method: 'POST',
+        body: JSON.stringify(patch),
+      }).catch(() => {
+        /* 静默失败：UI 仍可用，只是没持久化 */
+      })
+    }, 200)
+  }
 
   watch(
     syncTargetIdes,
-    (v) => {
-      try {
-        localStorage.setItem(IDE_SYNC_TARGET_KEY, JSON.stringify(v))
-      } catch {
-        /* ignore */
-      }
-    },
+    (v) => persist({ ideSyncTargets: v }),
     { deep: true },
   )
 
-  watch(autoSync, (v) => {
-    try {
-      localStorage.setItem(IDE_AUTOSYNC_KEY, v ? '1' : '0')
-    } catch {
-      /* ignore */
-    }
-  })
+  watch(autoSync, (v) => persist({ autoSync: v }))
 
-  // ===== IDE 拖拽排序 + localStorage 持久化 =====
+  // ===== IDE 拖拽排序 + 持久化 =====
   function saveIdeOrder() {
-    try {
-      localStorage.setItem(IDE_ORDER_KEY, JSON.stringify(ideList.value.map((i) => i.key)))
-    } catch {
-      /* ignore */
-    }
+    persist({ ideOrder: ideList.value.map((i) => i.key) })
   }
 
-  function loadIdeOrder() {
-    try {
-      const saved = localStorage.getItem(IDE_ORDER_KEY)
-      if (!saved) return
-      const order = JSON.parse(saved)
-      if (!Array.isArray(order) || !order.length) return
-      const map = new Map(ideList.value.map((i) => [i.key, i]))
-      const ordered = order.map((k: string) => map.get(k)).filter(Boolean) as IdeItem[]
-      // 追加未保存的新 IDE
-      for (const i of ideList.value) {
-        if (!order.includes(i.key)) ordered.push(i)
-      }
-      ideList.value = ordered
-    } catch {
-      /* ignore */
+  function applyIdeOrder(order: string[]) {
+    if (!Array.isArray(order) || !order.length) return
+    const map = new Map(ideList.value.map((i) => [i.key, i]))
+    const ordered = order.map((k: string) => map.get(k)).filter(Boolean) as IdeItem[]
+    // 追加未保存的新 IDE
+    for (const i of ideList.value) {
+      if (!order.includes(i.key)) ordered.push(i)
     }
+    ideList.value = ordered
   }
 
   function onIdeDragStart(e: DragEvent, key: string) {
@@ -145,8 +169,58 @@ export const useSyncStore = defineStore('sync', () => {
     dragOverIdeKey.value = ''
   }
 
-  // 初始化时恢复保存的顺序
-  loadIdeOrder()
+  /** 启动时从后端加载 UI 状态；后端为空时尝试从旧 localStorage 迁移一次 */
+  async function loadFromBackend() {
+    let state: Record<string, any> = {}
+    try {
+      state = await api<Record<string, any>>('/api/ui-state')
+    } catch {
+      state = {}
+    }
+    // 后端无数据 → 尝试从旧 localStorage 一次性迁移
+    const backendEmpty =
+      !state || !('ideSyncTargets' in state) && !('ideOrder' in state) && !('autoSync' in state)
+    if (backendEmpty) {
+      const legacy = readLegacyLs()
+      if (legacy.ideSyncTargets) state.ideSyncTargets = legacy.ideSyncTargets
+      if (legacy.ideOrder) state.ideOrder = legacy.ideOrder
+      if (legacy.autoSync !== undefined) state.autoSync = legacy.autoSync
+      // 把迁移结果回写到后端
+      if (
+        Array.isArray(state.ideSyncTargets) ||
+        Array.isArray(state.ideOrder) ||
+        typeof state.autoSync === 'boolean'
+      ) {
+        try {
+          await api('/api/ui-state', {
+            method: 'POST',
+            body: JSON.stringify({
+              ideSyncTargets: state.ideSyncTargets,
+              ideOrder: state.ideOrder,
+              autoSync: state.autoSync,
+            }),
+          })
+          clearLegacyLs()
+        } catch {
+          /* 迁移失败不影响使用 */
+        }
+      }
+    }
+
+    if (Array.isArray(state.ideSyncTargets)) {
+      syncTargetIdes.value = state.ideSyncTargets.filter((k: any) => typeof k === 'string')
+    }
+    if (typeof state.autoSync === 'boolean') {
+      autoSync.value = state.autoSync
+    }
+    if (Array.isArray(state.ideOrder)) {
+      applyIdeOrder(state.ideOrder)
+    }
+    loaded.value = true
+  }
+
+  // 异步初始化（不阻塞渲染，加载完成前先用默认值）
+  loadFromBackend()
 
   return {
     ideList,
@@ -157,10 +231,10 @@ export const useSyncStore = defineStore('sync', () => {
     syncing,
     autoSync,
     saveIdeOrder,
-    loadIdeOrder,
     onIdeDragStart,
     onIdeDragOver,
     onIdeDrop,
     onIdeDragEnd,
+    loadFromBackend,
   }
 })
