@@ -41,6 +41,7 @@ export interface SkillUpdateInfo {
   latest_message?: string
   latest_checked_at: string
   message?: string
+  rate_limited?: boolean
 }
 
 export type SkillSourceId = 'skillssh' | 'smithery' | 'modelscope' | 'skillsmp' | 'clawhub' | 'anthropics' | 'github'
@@ -291,6 +292,8 @@ export const useSkillStore = defineStore('skill', () => {
   const updatableCount = computed(() => updateList.value.filter((u) => u.has_update).length)
   /** 已记录来源的 skill 数量 */
   const trackedCount = computed(() => updateList.value.length)
+  /** 检查时是否触发 GitHub 限流 */
+  const rateLimited = computed(() => updateList.value.some((u) => u.rate_limited))
 
   /** 检查所有已记录来源的 skill 是否有新版本 */
   async function checkUpdates(names?: string[]) {
@@ -303,6 +306,9 @@ export const useSkillStore = defineStore('skill', () => {
       if (r.ok) {
         updateList.value = r.data || []
         updateCheckedAt.value = new Date().toISOString()
+        if (rateLimited.value) {
+          ui.toast('GitHub API 限流，部分技能未检查。可使用「CLI 升级」绕过限流', 'warn')
+        }
       } else {
         ui.toast('检查升级失败: ' + (r.error || '未知错误'), 'err')
       }
@@ -311,25 +317,27 @@ export const useSkillStore = defineStore('skill', () => {
     }
   }
 
-  /** 升级单个 skill（SSE 流式） */
-  async function upgradeSkill(name: string) {
+  /** 升级单个 skill（SSE 流式）
+   * mode: 'source'（默认，用 GitHub 源）| 'cli'（用 skills update，绕过 GitHub 限流）
+   */
+  async function upgradeSkill(name: string, mode: 'source' | 'cli' = 'source') {
     ui.clearLog()
     await runSse(
-      '/api/skills/upgrade?name=' + encodeURIComponent(name),
+      '/api/skills/upgrade?name=' + encodeURIComponent(name) + '&mode=' + mode,
       (line) => ui.appendLog(line),
       { onDone: () => loadInstalledSkills() },
     )
   }
 
   /** 批量升级所有有更新的 skill */
-  async function upgradeAll() {
+  async function upgradeAll(mode: 'source' | 'cli' = 'source') {
     const targets = updateList.value.filter((u) => u.has_update).map((u) => u.name)
     if (!targets.length) { ui.toast('没有可升级的技能', 'warn'); return }
     ui.clearLog()
     for (const name of targets) {
       ui.appendLog(`--- 升级 ${name} ---`)
       await runSse(
-        '/api/skills/upgrade?name=' + encodeURIComponent(name),
+        '/api/skills/upgrade?name=' + encodeURIComponent(name) + '&mode=' + mode,
         (line) => ui.appendLog(line),
       )
     }
@@ -573,7 +581,7 @@ export const useSkillStore = defineStore('skill', () => {
     skillCategories, skillRoles, filteredLocalSkills, enabledInstalledCount, disabledInstalledCount,
     filteredInstalled,
     // 升级检查
-    updateChecking, updateList, updateCheckedAt, updatableCount, trackedCount,
+    updateChecking, updateList, updateCheckedAt, updatableCount, trackedCount, rateLimited,
     checkUpdates, upgradeSkill, upgradeAll, fillSources,
     loadLocalSkills, searchSkills, toggleSkillSource, installFromSearch, installManualSkill,
     previewManualSource, clearManualPreview, toggleManualSkill, selectAllManualSkills, installSelectedManualSkills,

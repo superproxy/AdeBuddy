@@ -95,7 +95,8 @@ from lib.config_io import load_env_config_file, save_env_config_file
 from lib.skills import (
     build_install_command, parse_shorthand, enable_skill, disable_skill,
     get_enabled_skills, list_remote_skills, ensure_npx_yes,
-    record_skill_source, remove_skill_source, get_skill_sources, check_skill_updates,
+    record_skill_source, remove_skill_source, remove_skill_reference,
+    get_skill_sources, get_skill_references, check_skill_updates,
     resolve_github_owner_repo, find_source_via_search, fill_sources_via_search,
     link_skill_dir,
 )
@@ -1863,7 +1864,7 @@ def install_skill_sse():
                 yield f"data: [OK] {skill_name} (already installed)\n\n"
                 # 已安装也记录来源
                 try:
-                    record_skill_source(SKILL_YAML, skill_name, source="local:" + skill_name)
+                    record_skill_source(SKILL_YAML, skill_name, source="local:" + skill_name, ref_type="manual")
                 except Exception:
                     pass
                 return
@@ -1876,7 +1877,7 @@ def install_skill_sse():
                 yield f"data: [OK] Skill copied from template: {skill_name}\n\n"
                 # 记录来源：local 预置
                 try:
-                    record_skill_source(SKILL_YAML, skill_name, source="local:" + skill_name)
+                    record_skill_source(SKILL_YAML, skill_name, source="local:" + skill_name, ref_type="manual")
                 except Exception as e:
                     yield f"data: [WARN] 记录来源失败: {e}\n\n"
             except Exception as e:
@@ -1967,6 +1968,7 @@ def install_skill_sse():
                         SKILL_YAML, nm,
                         source=record_source,
                         skill_filter=nm if nm in selected_names and len(selected_names) > 1 else "",
+                        ref_type="manual",
                     )
                 except Exception as e:
                     yield f"data: [WARN] 记录来源失败 {nm}: {e}\n\n"
@@ -2055,27 +2057,34 @@ def skills_upgrade_sse():
     """SSE: 升级指定 skill（重新拉取并覆盖安装）。
     Query:
       name=skill_name  必填
+      mode=source|cli  可选，默认 source。
+        - source: 用记录的 GitHub 源 `npx skills add <src> --copy`（需源记录）
+        - cli:    用 `npx skills update <name> -y`，走 skills 注册表，绕过 GitHub API 限流
     """
     name = request.args.get("name", "").strip()
+    mode = (request.args.get("mode") or "source").strip().lower()
     if not name or "/" in name or "\\" in name or name in (".", ".."):
         return Response("data: [ERROR] 非法技能名\n\n", mimetype="text/event-stream")
 
     sources = get_skill_sources(SKILL_YAML)
     info = sources.get(name) if isinstance(sources, dict) else None
-    if not info or not isinstance(info, dict):
-        return Response(f"data: [ERROR] 未找到 {name} 的来源记录，无法升级\n\n", mimetype="text/event-stream")
 
-    src = (info.get("source") or "").strip()
-    if not src or src.startswith("local:"):
-        return Response(f"data: [ERROR] {name} 为本地预置技能，不可升级\n\n", mimetype="text/event-stream")
-
-    skill_filter = info.get("skill") or ""
-    # 重新安装：复用 install 路由的逻辑，但走 source 模式
-    if skill_filter:
-        cmd = f"npx --yes skills add {src} --skill {skill_filter} --copy -y"
+    if mode == "cli":
+        # CLI 模式：直接用 skills update，不依赖源记录，绕过 GitHub API
+        cmd = ensure_npx_yes(f"npx --yes skills update {name} -y")
     else:
-        cmd = f"npx --yes skills add {src} --copy -y"
-    cmd = ensure_npx_yes(cmd)
+        if not info or not isinstance(info, dict):
+            return Response(f"data: [ERROR] 未找到 {name} 的来源记录，无法升级（可改用 CLI 模式）\n\n", mimetype="text/event-stream")
+        src = (info.get("source") or "").strip()
+        if not src or src.startswith("local:"):
+            return Response(f"data: [ERROR] {name} 为本地预置技能，不可升级\n\n", mimetype="text/event-stream")
+        skill_filter = info.get("skill") or ""
+        # 重新安装：复用 install 路由的逻辑，但走 source 模式
+        if skill_filter:
+            cmd = f"npx --yes skills add {src} --skill {skill_filter} --copy -y"
+        else:
+            cmd = f"npx --yes skills add {src} --copy -y"
+        cmd = ensure_npx_yes(cmd)
 
     def _stream_upgrade():
         rc = 0
@@ -2090,11 +2099,14 @@ def skills_upgrade_sse():
         success = (rc == 0) or (DOT_AGENTS_SKILLS / name).exists() or (PROJECT_SKILLS_DIR / name).exists()
         if success:
             try:
+                # 更新来源记录（保留已有引用）
+                src_val = (info or {}).get("source", "") if isinstance(info, dict) else ""
+                skill_filter = (info or {}).get("skill", "") if isinstance(info, dict) else ""
                 record_skill_source(
                     SKILL_YAML, name,
-                    source=src,
+                    source=src_val,
                     skill_filter=skill_filter,
-                    url=info.get("url", ""),
+                    url=(info or {}).get("url", "") if isinstance(info, dict) else "",
                 )
                 yield f"data: [OK] 已升级并更新来源记录: {name}\n\n"
             except Exception as e:
@@ -2899,7 +2911,20 @@ def load_plugin():
 
 @app.route("/api/plugin/delete", methods=["POST"])
 def delete_plugin():
-    """删除 plugin 配置。Body: {file: xxx.plugin.yaml}"""
+    """删除 plugin 配置，并智能清理仅被该插件引用的 skill。
+
+    Body: {file: xxx.plugin.yaml}
+    逻辑：
+      1. 删除 plugin.yaml 文件
+      2. 从已安装清单移除（若存在）
+      3. 对该插件声明的每个 skill：
+         - 从 skill.yaml sources.references 移除 {type:"plugin", name:<插件名>}
+         - 剩余引用为 0 → 删除 skill 目录 + 清除 sources 记录
+         - 剩余引用 >0 → 保留（仍被其他插件或手动引用）
+         - 无 sources 记录（旧数据）→ 扫描其他插件是否引用；均未引用则保留（保守）
+      4. agentctl generate 刷新 mcp.json
+    返回: {ok, deleted_skills, kept_skills, path}
+    """
     body = request.get_json(force=True)
     fname = (body.get("file") or "").strip()
     if not fname:
@@ -2907,11 +2932,95 @@ def delete_plugin():
     path = _resolve_plugin_path(fname)
     if path is None:
         return jsonify({"ok": False, "error": "文件不存在"}), 404
+
+    # 先读取插件配置（删除前），获取插件名与 skills 列表
+    plugin_name = ""
+    skills_list: list = []
+    try:
+        cfg = load_env_config_file(path)
+        if isinstance(cfg, dict):
+            plugin_name = cfg.get("name", "") or path.stem
+            skills_list = cfg.get("skills", []) or []
+    except Exception:
+        plugin_name = path.stem
+
+    # 收集该插件声明的 skill 名
+    plugin_skill_names = []
+    for sk in skills_list:
+        sn = sk.get("skill") or sk.get("name") if isinstance(sk, dict) else str(sk)
+        if sn:
+            plugin_skill_names.append(sn)
+
+    # 扫描其他插件是否引用同一 skill（用于无 sources 记录时的保守判断）
+    other_plugin_skills: set = set()
+    for plugins_dir in _plugin_search_dirs():
+        for pat in ("*.plugin.yaml", "*.plugin.yml", "*.plugin.json"):
+            for f in plugins_dir.glob(pat):
+                if f == path:
+                    continue
+                try:
+                    oc = load_env_config_file(f)
+                    if not isinstance(oc, dict):
+                        continue
+                    for sk in (oc.get("skills", []) or []):
+                        sn = sk.get("skill") or sk.get("name") if isinstance(sk, dict) else str(sk)
+                        if sn:
+                            other_plugin_skills.add(sn)
+                except Exception:
+                    continue
+
+    deleted_skills: list = []
+    kept_skills: list = []
+
+    # 删除 plugin.yaml 文件
     try:
         path.unlink()
-        return jsonify({"ok": True, "path": str(path.relative_to(PROJECT_ROOT))})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": f"删除插件文件失败: {e}"}), 500
+
+    # 从已安装清单移除
+    try:
+        from lib.plugins import remove_from_installed
+        remove_from_installed(PROJECT_ROOT, plugin_name)
+    except Exception:
+        pass
+
+    # 逐个处理 skill 引用
+    import shutil
+    for sn in plugin_skill_names:
+        remaining = remove_skill_reference(SKILL_YAML, sn, "plugin", plugin_name)
+        if remaining == 0:
+            # 无引用 → 删除 skill 目录 + 清除 sources 记录
+            for base in (DOT_AGENTS_SKILLS, PROJECT_SKILLS_DIR):
+                sd = base / sn
+                if sd.exists():
+                    shutil.rmtree(sd, ignore_errors=True)
+            remove_skill_source(SKILL_YAML, sn)
+            deleted_skills.append(sn)
+        elif remaining > 0:
+            # 仍被引用 → 保留
+            kept_skills.append(sn)
+        else:
+            # 无 sources 记录（旧数据）：若其他插件也未引用，保守保留
+            kept_skills.append(sn)
+
+    # 刷新 mcp.json
+    try:
+        subprocess.run(
+            _script_run_cmd("agentctl", ["generate"]),
+            cwd=str(PROJECT_ROOT), capture_output=True, text=True,
+            encoding="utf-8", errors="ignore", timeout=60,
+        )
+    except Exception:
+        pass
+
+    return jsonify({
+        "ok": True,
+        "path": str(path.relative_to(PROJECT_ROOT)),
+        "plugin_name": plugin_name,
+        "deleted_skills": deleted_skills,
+        "kept_skills": kept_skills,
+    })
 
 
 @app.route("/api/plugin/export", methods=["GET"])
@@ -3829,6 +3938,25 @@ def install_plugin_sse():
                 yield f"data: [FAIL] Skill installation failed: {skill_name}\n\n"
         except Exception as e:
             yield f"data: [ERROR] 技能安装失败: {e}\n\n"
+
+        # 记录插件引用到 skill.yaml sources（用于删除插件时判断 skill 是否可清理）
+        try:
+            plugin_name = cfg.get("name", "")
+            for sk in (cfg.get("skills", []) or []):
+                sn = sk.get("skill") or sk.get("name") if isinstance(sk, dict) else str(sk)
+                if sn and ((DOT_AGENTS_SKILLS / sn).exists() or (PROJECT_SKILLS_DIR / sn).exists()):
+                    src = ""
+                    if isinstance(sk, dict):
+                        src = sk.get("source") or sk.get("repo") or ""
+                    record_skill_source(
+                        SKILL_YAML, sn,
+                        source=src or f"plugin:{plugin_name}",
+                        fetch_sha=False,
+                        ref_type="plugin",
+                        ref_name=plugin_name,
+                    )
+        except Exception as e:
+            yield f"data: [WARN] 记录插件引用失败: {e}\n\n"
 
         # 注册到已安装清单（让 generate 合并该插件的 mcpServers）
         yield f"data: [STEP] 注册到已安装清单\n\n"

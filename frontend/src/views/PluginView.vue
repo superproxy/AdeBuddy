@@ -11,7 +11,7 @@ const ui = useUiStore()
 const { plugins, installingPlugin, selectedForExport } = storeToRefs(plugin)
 const {
   refreshPluginList, exportPlugin, onImportPluginFile, importPluginFile,
-  onTogglePlugin, editPlugin, toggleSelectForExport, selectFilesForExport,
+  onTogglePlugin, editPlugin, deletePlugin, toggleSelectForExport, selectFilesForExport,
   clearExportSelection, exportSelectedPlugins, publishToMarketplace,
 } = plugin
 
@@ -435,6 +435,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
                     </div>
                   </div>
                   <button type="button" class="btn btn-ghost btn-sm" title="发布到本地市场" @click="publishToMarketplace(p.file)">分享</button>
+                  <button type="button" class="btn btn-danger-text btn-sm" title="删除插件及其独占技能" @click="deletePlugin(p)">删除</button>
                 </div>
               </td>
             </tr>
@@ -502,6 +503,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
               </div>
             </div>
             <button type="button" class="btn btn-ghost btn-sm" title="发布到本地市场" @click="publishToMarketplace(p.file)">分享</button>
+            <button type="button" class="btn btn-danger-text btn-sm" title="删除插件及其独占技能" @click="deletePlugin(p)">删除</button>
           </div>
         </article>
         <div v-if="!sortedPlugins.length" class="empty-cell">

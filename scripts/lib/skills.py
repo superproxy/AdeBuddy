@@ -927,7 +927,8 @@ def _github_headers() -> dict:
 def _fetch_github_head_sha(owner: str, repo: str, timeout: int = 10) -> dict:
     """查询 GitHub 仓库 HEAD commit。
 
-    Returns: {sha, ref, message} — 失败时 message 非空。
+    Returns: {sha, ref, message, rate_limited} — 失败时 message 非空。
+    rate_limited=True 表示触发 GitHub API 限流（403）。
     """
     import requests
     headers = _github_headers()
@@ -938,24 +939,62 @@ def _fetch_github_head_sha(owner: str, repo: str, timeout: int = 10) -> dict:
             headers=headers, timeout=timeout,
         )
         if r.status_code == 404:
-            return {"sha": "", "ref": "", "message": "仓库不存在或无访问权限"}
+            return {"sha": "", "ref": "", "message": "仓库不存在或无访问权限", "rate_limited": False}
+        if r.status_code == 403:
+            # 限流：剩余配额为 0
+            remaining = r.headers.get("X-RateLimit-Remaining", "?")
+            return {"sha": "", "ref": "", "message": f"GitHub API 限流（剩余 {remaining}），请设置 GITHUB_TOKEN 或改用 CLI 升级", "rate_limited": True}
         r.raise_for_status()
         default_branch = r.json().get("default_branch") or "main"
+    except requests.exceptions.HTTPError as e:
+        if r.status_code == 403:
+            return {"sha": "", "ref": "", "message": "GitHub API 限流，请设置 GITHUB_TOKEN 或改用 CLI 升级", "rate_limited": True}
+        return {"sha": "", "ref": "", "message": f"获取仓库信息失败: {e}", "rate_limited": False}
     except Exception as e:
-        return {"sha": "", "ref": "", "message": f"获取仓库信息失败: {e}"}
+        return {"sha": "", "ref": "", "message": f"获取仓库信息失败: {e}", "rate_limited": False}
     # 再取该分支最新 commit
     try:
         r = requests.get(
             f"https://api.github.com/repos/{owner}/{repo}/commits/{default_branch}",
             headers=headers, timeout=timeout,
         )
+        if r.status_code == 403:
+            return {"sha": "", "ref": default_branch, "message": "GitHub API 限流，请设置 GITHUB_TOKEN 或改用 CLI 升级", "rate_limited": True}
         r.raise_for_status()
         data = r.json()
         sha = data.get("sha") or ""
         msg = (data.get("commit", {}).get("message") or "").split("\n", 1)[0]
-        return {"sha": sha, "ref": default_branch, "message": msg}
+        return {"sha": sha, "ref": default_branch, "message": msg, "rate_limited": False}
+    except requests.exceptions.HTTPError as e:
+        if r.status_code == 403:
+            return {"sha": "", "ref": default_branch, "message": "GitHub API 限流，请设置 GITHUB_TOKEN 或改用 CLI 升级", "rate_limited": True}
+        return {"sha": "", "ref": default_branch, "message": f"获取 commit 失败: {e}", "rate_limited": False}
     except Exception as e:
-        return {"sha": "", "ref": default_branch, "message": f"获取 commit 失败: {e}"}
+        return {"sha": "", "ref": default_branch, "message": f"获取 commit 失败: {e}", "rate_limited": False}
+
+
+def _ref_key(ref: dict) -> str:
+    """生成引用的唯一键（type + name），用于去重。"""
+    return f"{ref.get('type', '')}|{ref.get('name', '')}"
+
+
+def _append_reference(entry: dict, ref_type: str, ref_name: str = "") -> None:
+    """向 entry 追加一条引用记录（按 type+name 去重）。"""
+    refs = entry.get("references")
+    if not isinstance(refs, list):
+        refs = []
+    new_ref = {"type": ref_type, "at": _now_utc_iso()}
+    if ref_name:
+        new_ref["name"] = ref_name
+    key = _ref_key(new_ref)
+    # 去重：已存在同 type+name 则仅刷新 at
+    for r in refs:
+        if isinstance(r, dict) and _ref_key(r) == key:
+            r["at"] = new_ref["at"]
+            entry["references"] = refs
+            return
+    refs.append(new_ref)
+    entry["references"] = refs
 
 
 def record_skill_source(
@@ -967,11 +1006,16 @@ def record_skill_source(
     installed_sha: str = "",
     installed_ref: str = "",
     fetch_sha: bool = True,
+    ref_type: str = "",
+    ref_name: str = "",
 ) -> None:
     """记录一个 skill 的安装来源到 skill.yaml。
 
     若 fetch_sha=True 且 installed_sha 为空，会尝试查询 GitHub HEAD SHA
     （保证"默认最新"语义）。惰性补全场景应传 fetch_sha=False 避免网络阻塞。
+
+    ref_type / ref_name：可选，记录引用来源（"plugin"+插件名 或 "manual"），
+    用于删除插件时判断 skill 是否仍被引用。
     """
     if not skill_name:
         return
@@ -988,6 +1032,7 @@ def record_skill_source(
                 installed_sha = info["sha"]
                 if not installed_ref:
                     installed_ref = info.get("ref", "")
+    existing = sources.get(skill_name) if isinstance(sources.get(skill_name), dict) else {}
     entry = {
         "source": source,
         "installed_at": _now_utc_iso(),
@@ -998,6 +1043,12 @@ def record_skill_source(
         entry["skill"] = skill_filter
     if url:
         entry["url"] = url
+    # 保留已有 references（增量更新时不丢失引用记录）
+    if isinstance(existing.get("references"), list):
+        entry["references"] = existing["references"]
+    # 追加新引用
+    if ref_type:
+        _append_reference(entry, ref_type, ref_name)
     sources[skill_name] = entry
     data["sources"] = sources
     save_skill_yaml(skill_yaml_path, data)
@@ -1015,6 +1066,51 @@ def remove_skill_source(skill_yaml_path: Path, skill_name: str) -> bool:
     return True
 
 
+def remove_skill_reference(
+    skill_yaml_path: Path,
+    skill_name: str,
+    ref_type: str,
+    ref_name: str = "",
+) -> int:
+    """从 skill 的 references 中移除一条引用。
+
+    Returns: 移除后剩余的引用数量；-1 表示该 skill 无来源记录。
+    用于删除插件时：移除 {type:"plugin", name:<插件名>} 引用，
+    若剩余引用为 0 则该 skill 可安全删除。
+    """
+    data = load_skill_yaml(skill_yaml_path)
+    sources = data.get("sources")
+    if not isinstance(sources, dict) or skill_name not in sources:
+        return -1
+    entry = sources[skill_name]
+    if not isinstance(entry, dict):
+        return -1
+    refs = entry.get("references")
+    if not isinstance(refs, list):
+        # 旧数据无 references 字段 → 视为有一条隐式 manual 引用（保守保留）
+        return 1
+    key = f"{ref_type}|{ref_name}"
+    before = len(refs)
+    refs = [r for r in refs if not (isinstance(r, dict) and _ref_key(r) == key)]
+    if len(refs) == before:
+        # 未找到匹配引用
+        return len(refs)
+    entry["references"] = refs
+    data["sources"] = sources
+    save_skill_yaml(skill_yaml_path, data)
+    return len(refs)
+
+
+def get_skill_references(skill_yaml_path: Path, skill_name: str) -> list:
+    """读取 skill 的 references 列表。无记录返回空列表。"""
+    sources = get_skill_sources(skill_yaml_path)
+    entry = sources.get(skill_name)
+    if not isinstance(entry, dict):
+        return []
+    refs = entry.get("references")
+    return refs if isinstance(refs, list) else []
+
+
 def get_skill_sources(skill_yaml_path: Path) -> dict:
     """读取 skill.yaml 的 sources 字典。"""
     data = load_skill_yaml(skill_yaml_path)
@@ -1029,11 +1125,13 @@ def check_skill_updates(skill_yaml_path: Path, only_names: list = None) -> list:
         only_names: 仅检查指定名称；None 表示全部。
 
     Returns: [{name, source, owner, repo, installed_sha, latest_sha,
-              has_update, latest_checked_at, message}]
+              has_update, latest_checked_at, message, rate_limited}]
+    遇到 GitHub 限流时立即停止后续请求，剩余 skill 标记为跳过。
     """
     sources = get_skill_sources(skill_yaml_path)
     out = []
     only_set = set(only_names) if only_names else None
+    rate_limited = False
     for name, info in sources.items():
         if only_set is not None and name not in only_set:
             continue
@@ -1053,9 +1151,27 @@ def check_skill_updates(skill_yaml_path: Path, only_names: list = None) -> list:
                 "has_update": False,
                 "latest_checked_at": _now_utc_iso(),
                 "message": "非 GitHub 源，无法检查升级",
+                "rate_limited": False,
+            })
+            continue
+        # 已限流则跳过后续请求，避免持续 403
+        if rate_limited:
+            out.append({
+                "name": name,
+                "source": source,
+                "owner": owner,
+                "repo": repo,
+                "installed_sha": installed_sha,
+                "latest_sha": "",
+                "has_update": False,
+                "latest_checked_at": _now_utc_iso(),
+                "message": "GitHub API 已限流，跳过（设置 GITHUB_TOKEN 或改用 CLI 升级）",
+                "rate_limited": True,
             })
             continue
         head = _fetch_github_head_sha(owner, repo)
+        if head.get("rate_limited"):
+            rate_limited = True
         latest_sha = head.get("sha", "").strip()
         # has_update 判断：
         # - 两者都有且不同 → 有更新
@@ -1079,6 +1195,7 @@ def check_skill_updates(skill_yaml_path: Path, only_names: list = None) -> list:
             "latest_message": head.get("message", ""),
             "latest_checked_at": _now_utc_iso(),
             "message": head.get("message") if not latest_sha else "",
+            "rate_limited": bool(head.get("rate_limited")),
         })
     return out
 

@@ -16,7 +16,7 @@ const {
   skillSearchMeta, manualSkillInput, manualPreview, manualSelected, manualPreviewing, manualInstalling,
   installedSkills, enabledInstalledCount, disabledInstalledCount,
   filteredInstalled, filteredLocalSkills, localSkills, localFilterQ, listFilter, listQuery,
-  updateChecking, updateList, updateCheckedAt, updatableCount, trackedCount,
+  updateChecking, updateList, updateCheckedAt, updatableCount, trackedCount, rateLimited,
 } = storeToRefs(skill)
 const {
   searchSkills, toggleSkillSource, installFromSearch,
@@ -44,8 +44,8 @@ function openUpdatePanel() {
 }
 function closeUpdatePanel() { updatePanelOpen.value = false }
 async function refreshUpdates() { await checkUpdates() }
-async function doUpgrade(name: string) { await upgradeSkill(name) }
-async function doUpgradeAll() { await upgradeAll() }
+async function doUpgrade(name: string, mode: 'source' | 'cli' = 'source') { await upgradeSkill(name, mode) }
+async function doUpgradeAll(mode: 'source' | 'cli' = 'source') { await upgradeAll(mode) }
 const fillingSources = ref(false)
 async function doFillSources() {
   fillingSources.value = true
@@ -880,10 +880,19 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ spin: fillingSources }"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
                   {{ fillingSources ? '搜索中...' : '搜索补全来源' }}
                 </button>
-                <button v-if="updatableCount > 0" type="button" class="btn btn-soft btn-sm" @click="doUpgradeAll">
+                <button v-if="updatableCount > 0" type="button" class="btn btn-soft btn-sm" @click="doUpgradeAll('source')">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m6 9 6 6 6-6"/><path d="M21 21H3"/></svg>
                   全部升级 ({{ updatableCount }})
                 </button>
+                <button type="button" class="btn btn-secondary btn-sm" @click="doUpgradeAll('cli')" title="使用 skills update 命令，走注册表绕过 GitHub API 限流">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                  CLI 全部升级
+                </button>
+              </div>
+
+              <div v-if="rateLimited" class="update-warn-banner">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <span>GitHub API 限流，部分技能未完成检查。可设置 <code>GITHUB_TOKEN</code> 环境变量提升配额，或使用「CLI 升级」直接通过 skills 注册表升级（不经 GitHub API）。</span>
               </div>
 
               <div class="update-list">
@@ -931,15 +940,21 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
                         v-if="u.has_update"
                         type="button"
                         class="btn btn-secondary btn-sm"
-                        @click="doUpgrade(u.name)"
+                        @click="doUpgrade(u.name, 'source')"
                       >升级</button>
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-sm"
+                        title="使用 skills update 命令升级，绕过 GitHub API 限流"
+                        @click="doUpgrade(u.name, 'cli')"
+                      >CLI 升级</button>
                     </div>
                   </div>
                 </div>
               </div>
 
               <p class="export-tip">
-                仅支持 GitHub 源的升级检查；本地预置技能不参与升级。安装时自动记录来源与版本 SHA，确保默认为最新版本。
+                升级检查通过 GitHub API 比对 SHA（无 Token 限 60 次/小时，建议设置 <code>GITHUB_TOKEN</code>）。触发限流时可使用「CLI 升级」通过 skills 注册表直接升级，不经 GitHub API。本地预置技能不参与升级。
               </p>
             </div>
 
@@ -1515,10 +1530,13 @@ table tbody tr.selected:hover { background: rgba(22, 93, 255, 0.12); }
 .stat-label { font-size: 11px; color: var(--ink-500); }
 .stat-val { font-size: 18px; font-weight: 700; color: var(--ink-900); }
 .stat-val.small { font-size: 12px; font-weight: 500; }
-.update-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+.update-actions { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.update-warn-banner { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; margin-bottom: 12px; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 6px; font-size: 12px; color: var(--ink-700); }
+.update-warn-banner svg { width: 16px; height: 16px; flex-shrink: 0; color: rgb(245, 158, 11); margin-top: 1px; }
+.update-warn-banner code { background: var(--ink-100); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
 .update-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; padding-right: 4px; }
 .update-empty { text-align: center; padding: 32px 16px; color: var(--ink-500); font-size: 13px; }
-.update-row { display: grid; grid-template-columns: 1.5fr 1fr 80px 64px; gap: 8px; align-items: center; padding: 8px 10px; background: var(--ink-50); border-radius: 6px; border-left: 3px solid transparent; }
+.update-row { display: grid; grid-template-columns: 1.5fr 1fr 80px 120px; gap: 8px; align-items: center; padding: 8px 10px; background: var(--ink-50); border-radius: 6px; border-left: 3px solid transparent; }
 .update-row.hot { border-left-color: rgb(245, 158, 11); background: rgba(245, 158, 11, 0.05); }
 .update-row-name { font-size: 13px; font-weight: 600; color: var(--ink-900); word-break: break-all; }
 .update-row-source { font-size: 11px; color: var(--ink-500); }

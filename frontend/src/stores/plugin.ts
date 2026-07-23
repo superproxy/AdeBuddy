@@ -181,6 +181,24 @@ export const usePluginStore = defineStore('plugin', () => {
     selectedPluginFile.value = file
     ui.toast('已打开「插件构建」继续编辑')
   }
+  async function deletePlugin(p: PluginItem) {
+    if (!confirm(`确认删除插件「${p.name}」？\n\n仅被该插件引用的技能会被一并清理；仍被其他插件或手动引用的技能将保留。`)) return
+    const r = await api<{ ok: boolean; error?: string; deleted_skills?: string[]; kept_skills?: string[] }>(
+      '/api/plugin/delete', { method: 'POST', body: JSON.stringify({ file: p.file }) },
+    )
+    if (r.ok) {
+      const del = r.deleted_skills || []
+      const kept = r.kept_skills || []
+      const parts: string[] = [`已删除插件: ${p.name}`]
+      if (del.length) parts.push(`清理技能 ${del.length} 个: ${del.join(', ')}`)
+      if (kept.length) parts.push(`保留技能 ${kept.length} 个（仍被引用）`)
+      ui.toast(parts.join('\n'))
+      refreshPluginList()
+      skill.loadInstalledSkills()
+    } else {
+      ui.toast('删除失败: ' + (r.error || '未知错误'), 'err')
+    }
+  }
   async function publishToMarketplace(file: string) {
     const tags = prompt('请输入标签（逗号分隔，可留空）：', '')
     const tagList = tags ? tags.split(/[,，]/).map((t: string) => t.trim()).filter(Boolean) : []
@@ -193,6 +211,6 @@ export const usePluginStore = defineStore('plugin', () => {
     refreshPluginList, exportPlugin, triggerImportPlugin,
     toggleSelectForExport, toggleSelectAllForExport, selectFilesForExport, clearExportSelection,
     exportSelectedPlugins,
-    importPluginFile, onImportPluginFile, onTogglePlugin, editPlugin, publishToMarketplace,
+    importPluginFile, onImportPluginFile, onTogglePlugin, editPlugin, deletePlugin, publishToMarketplace,
   }
 })
